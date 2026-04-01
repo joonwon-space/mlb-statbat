@@ -19,7 +19,7 @@ Delegate all work to the `doc-updater` agent now.
    - Frontend pages from `frontend/src/app/**/page.tsx`
    - Recent git changes (`git log --oneline -20`)
 
-2. **Reads all docs** in `docs/architecture/`
+2. **Reads all docs** in `docs/architecture/` and `docs/setup/`
 
 3. **Builds an explicit diff** per doc section:
    - Items in code but missing from docs → add
@@ -29,7 +29,14 @@ Delegate all work to the `doc-updater` agent now.
 
 5. **Creates missing docs** if `docs/architecture/` doesn't exist yet
 
-6. **Commits** all doc changes
+6. **Updates `README.md`** at the project root:
+   - Project overview and tech stack
+   - Quick start instructions (docker compose, local dev)
+   - Project structure summary
+   - Links to detailed docs in `docs/`
+   - Does NOT overwrite manually-written sections marked with `<!-- manual -->`
+
+7. **Commits** all doc changes
 
 ## What this command does NOT touch
 
