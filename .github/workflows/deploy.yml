@@ -1,8 +1,9 @@
 name: Deploy to Mac Mini
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch: # 수동 실행만 허용 (self-hosted runner 준비 후 push 트리거 추가 예정)
+  # push:
+  #   branches: [main]
 
 jobs:
   deploy:
