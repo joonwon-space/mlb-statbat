@@ -8,6 +8,8 @@ jobs:
   deploy:
     runs-on: [self-hosted, deploy]
     timeout-minutes: 20
+    env:
+      PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 
     steps:
       - name: Checkout
