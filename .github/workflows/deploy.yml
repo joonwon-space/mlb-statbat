@@ -9,7 +9,7 @@ jobs:
     runs-on: [self-hosted, deploy]
     timeout-minutes: 20
     env:
-      PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+      PATH: /tmp/docker-bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
       DOCKER_CONFIG: /tmp/docker-config-ci
 
     steps:
@@ -18,10 +18,17 @@ jobs:
 
       - name: Configure Docker (disable keychain)
         run: |
+          # Create isolated docker config without credential store
           mkdir -p /tmp/docker-config-ci/cli-plugins
           echo '{"auths":{}}' > /tmp/docker-config-ci/config.json
           cp ~/.docker/cli-plugins/docker-compose /tmp/docker-config-ci/cli-plugins/docker-compose
           cp ~/.docker/cli-plugins/docker-buildx /tmp/docker-config-ci/cli-plugins/docker-buildx
+          # Replace keychain helper with a no-op that returns empty credentials
+          mkdir -p /tmp/docker-bin
+          printf '#!/bin/sh\ncase "$1" in\n  get) echo '"'"'{"Username":"","Secret":""}'"'"' ;;\nesac\n' > /tmp/docker-bin/docker-credential-osxkeychain
+          chmod +x /tmp/docker-bin/docker-credential-osxkeychain
+          printf '#!/bin/sh\ncase "$1" in\n  get) echo '"'"'{"Username":"","Secret":""}'"'"' ;;\nesac\n' > /tmp/docker-bin/docker-credential-desktop
+          chmod +x /tmp/docker-bin/docker-credential-desktop
 
       - name: Create .env from secrets
         run: |
