@@ -18,8 +18,10 @@ jobs:
 
       - name: Configure Docker (disable keychain)
         run: |
-          mkdir -p /tmp/docker-config-ci
+          mkdir -p /tmp/docker-config-ci/cli-plugins
           echo '{"auths":{}}' > /tmp/docker-config-ci/config.json
+          cp ~/.docker/cli-plugins/docker-compose /tmp/docker-config-ci/cli-plugins/docker-compose
+          cp ~/.docker/cli-plugins/docker-buildx /tmp/docker-config-ci/cli-plugins/docker-buildx
 
       - name: Create .env from secrets
         run: |
