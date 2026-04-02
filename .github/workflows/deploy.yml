@@ -10,10 +10,16 @@ jobs:
     timeout-minutes: 20
     env:
       PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+      DOCKER_CONFIG: /tmp/docker-config-ci
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure Docker (disable keychain)
+        run: |
+          mkdir -p /tmp/docker-config-ci
+          echo '{"auths":{}}' > /tmp/docker-config-ci/config.json
 
       - name: Create .env from secrets
         run: |
