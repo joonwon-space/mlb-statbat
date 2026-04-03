@@ -12,7 +12,7 @@ Each item should be completable in a single commit.
 - [x] pytest 설정 추가 -- `backend/pyproject.toml` ([tool.pytest.ini_options] asyncio_mode='auto'), `conftest.py` (httpx.AsyncClient 픽스처), `pytest-asyncio` + `pytest-cov` 의존성 [team-analysis: TD-012]
 - [x] `test_main.py` 엔드포인트 테스트 -- GET /health, POST /api/query (501 stub, 400 validation, 성공 경로 mock) [team-analysis: TD-011]
 - [x] `test_text_to_sql.py` 확장 -- `execute_sql()` mocked AsyncSession 테스트, `generate_answer()` 스텁 테스트 [team-analysis: TD-011]
-- [ ] `test_schemas.py` 유효성 검사 테스트 -- min_length/max_length 경계값, 빈 문자열, 초과 길이 [team-analysis: TD-011]
+- [x] `test_schemas.py` 유효성 검사 테스트 -- min_length/max_length 경계값, 빈 문자열, 초과 길이 [team-analysis: TD-011]
 
 ### P0 -- Infrastructure (Sprint 2)
 
