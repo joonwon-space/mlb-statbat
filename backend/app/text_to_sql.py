@@ -1,5 +1,16 @@
+import logging
+import re
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+# Patterns for SQL statements that must never be executed
+_BLOCKED_STATEMENTS = re.compile(
+    r"^\s*(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b",
+    re.IGNORECASE,
+)
 
 # DB schema description for the LLM prompt
 DB_SCHEMA = """
@@ -45,9 +56,30 @@ async def generate_sql(question: str) -> str:
     raise NotImplementedError("LLM integration not yet configured")
 
 
+def _validate_select_only(sql: str) -> None:
+    """Raise ValueError if sql contains any non-SELECT statement.
+
+    Only SELECT queries are permitted. Any attempt to execute DDL or DML
+    (DROP, DELETE, UPDATE, INSERT, ALTER, etc.) is rejected immediately.
+    """
+    stripped = sql.strip()
+    if _BLOCKED_STATEMENTS.match(stripped):
+        raise ValueError("Only SELECT queries are permitted")
+    if not re.match(r"^\s*SELECT\b", stripped, re.IGNORECASE):
+        raise ValueError("Query must start with SELECT")
+
+
 async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:
-    """Execute generated SQL and return rows as list of dicts."""
-    result = await db.execute(text(sql))
+    """Execute generated SQL and return rows as list of dicts.
+
+    Only SELECT queries are allowed. Raises ValueError for any other statement.
+    """
+    _validate_select_only(sql)
+    try:
+        result = await db.execute(text(sql))
+    except Exception:
+        logger.exception("SQL execution failed for query: %s", sql)
+        raise
     columns = list(result.keys())
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
