@@ -66,6 +66,12 @@ def _validate_select_only(sql: str) -> None:
     stmt_type = stmt.get_type()
     if stmt_type != "SELECT":
         raise ValueError("Only SELECT queries are permitted")
+    # Block SELECT INTO — sqlparse classifies it as SELECT but it creates a table
+    if any(
+        t.ttype is sqlparse.tokens.Keyword and t.normalized == "INTO"
+        for t in stmt.flatten()
+    ):
+        raise ValueError("SELECT INTO is not permitted")
 
 
 async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:

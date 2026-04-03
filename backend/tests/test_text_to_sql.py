@@ -112,16 +112,9 @@ class TestValidateSelectOnly:
     # --- Edge cases ---
 
     def test_select_into_blocked(self) -> None:
-        """SELECT INTO creates a new table — should be blocked if sqlparse detects it."""
-        # sqlparse may classify this differently; verify it doesn't pass silently
-        sql = "SELECT * INTO new_table FROM players"
-        # This is a data-modifying operation — we want it blocked or at minimum not pass as SELECT
-        try:
-            _validate_select_only(sql)
-            # If sqlparse classifies SELECT INTO as SELECT, that's a known limitation
-            # asyncpg will block it at the driver level anyway
-        except ValueError:
-            pass  # Correctly blocked
+        """SELECT INTO creates a new table — must be blocked."""
+        with pytest.raises(ValueError, match="SELECT INTO"):
+            _validate_select_only("SELECT * INTO new_table FROM players")
 
     def test_explain_select(self) -> None:
         """EXPLAIN should not be allowed — only pure SELECT."""
