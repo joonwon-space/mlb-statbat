@@ -5,12 +5,19 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 
 import pandas as pd
 from dotenv import load_dotenv
 from pybaseball import batting_stats
 from sqlalchemy import create_engine, text
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -22,9 +29,9 @@ DATABASE_URL = os.getenv(
 
 def fetch_batting(season: int, qual: int = 50) -> pd.DataFrame:
     """Fetch season batting stats via pybaseball."""
-    print(f"Fetching {season} batting stats from FanGraphs (qual={qual})...")
+    logger.info("Fetching %d batting stats from FanGraphs (qual=%d)...", season, qual)
     df = batting_stats(season, qual=qual)
-    print(f"  Retrieved {len(df)} player rows")
+    logger.info("  Retrieved %d player rows", len(df))
     return df
 
 
@@ -115,7 +122,7 @@ def load(players: pd.DataFrame, stats: pd.DataFrame) -> None:
                 values,
             )
 
-    print(f"  Loaded {len(players)} players, {len(stats)} batting stat rows")
+    logger.info("  Loaded %d players, %d batting stat rows", len(players), len(stats))
 
 
 def main():
@@ -132,7 +139,7 @@ def main():
     df = fetch_batting(args.season, qual=args.qual)
     players, stats = transform(df, args.season)
     load(players, stats)
-    print("Done!")
+    logger.info("Done!")
 
 
 if __name__ == "__main__":
