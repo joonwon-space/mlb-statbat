@@ -203,24 +203,79 @@ class TestExecuteSql:
 
 
 class TestGenerateAnswer:
-    """Tests for generate_answer() stub behaviour."""
+    """Tests for generate_answer() — both fallback and LLM-wired paths."""
 
     async def test_returns_no_results_message_for_empty_rows(self) -> None:
         answer = await generate_answer("Who led in home runs?", "SELECT ...", [])
         assert "No results" in answer
 
-    async def test_returns_string_for_non_empty_rows(self) -> None:
+    async def test_falls_back_to_str_rows_when_no_api_key(self) -> None:
+        """Without an API key the function should return str(rows)."""
+        rows = [{"era": 1.92}]
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = ""
+            answer = await generate_answer("Best ERA?", "SELECT ...", rows)
+        assert "1.92" in answer
+
+    async def test_calls_llm_and_returns_natural_language_answer(self) -> None:
         rows = [{"name": "Aaron Judge", "home_runs": 62}]
-        answer = await generate_answer("Home run leader?", "SELECT ...", rows)
+        fake_answer = "Aaron Judge led the league with 62 home runs."
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text=fake_answer)]
+
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
+            with patch("app.text_to_sql.anthropic.AsyncAnthropic") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_message)
+                mock_client_cls.return_value = mock_client
+
+                answer = await generate_answer(
+                    "Who led in home runs?", "SELECT ...", rows
+                )
+
+        assert answer == fake_answer
+
+    async def test_truncates_large_result_sets_to_20_rows(self) -> None:
+        """Only the first 20 rows should be sent to the LLM."""
+        rows = [{"id": i} for i in range(25)]
+        fake_answer = "Lots of players."
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text=fake_answer)]
+
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
+            with patch("app.text_to_sql.anthropic.AsyncAnthropic") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_message)
+                mock_client_cls.return_value = mock_client
+
+                answer = await generate_answer("List players", "SELECT ...", rows)
+
+        # Verify the user message content included "5 more rows" truncation note
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        user_msg = call_kwargs["messages"][0]["content"]
+        assert "5 more rows" in user_msg
+
+    async def test_falls_back_gracefully_when_llm_returns_empty_content(self) -> None:
+        rows = [{"name": "Test"}]
+        mock_message = MagicMock()
+        mock_message.content = []
+
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
+            with patch("app.text_to_sql.anthropic.AsyncAnthropic") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_message)
+                mock_client_cls.return_value = mock_client
+
+                answer = await generate_answer("Who?", "SELECT ...", rows)
+
+        # Should fall back to str(rows)
         assert isinstance(answer, str)
         assert len(answer) > 0
-
-    async def test_returns_string_representation_of_rows(self) -> None:
-        """Stub returns str(rows); verify it contains row data."""
-        rows = [{"era": 1.92}]
-        answer = await generate_answer("Best ERA?", "SELECT ...", rows)
-        # The stub converts rows to str — the value should appear somewhere
-        assert "1.92" in answer
 
 
 class TestStripSqlFence:

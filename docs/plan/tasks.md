@@ -24,7 +24,7 @@ Each item should be completable in a single commit.
 ### P1 -- LLM Integration (마지막)
 
 - [x] `generate_sql()` Anthropic Claude 연동 -- `text_to_sql.py`에서 `anthropic.AsyncAnthropic` 클라이언트로 `SYSTEM_PROMPT` + 유저 질문 전송, SQL 파싱 반환 [team-analysis: PROD-011]
-- [ ] `generate_answer()` LLM 자연어 답변 생성 -- SQL 결과 rows + 원래 질문을 LLM에 전달, 사람이 읽을 수 있는 요약 생성 [team-analysis: PROD-011b]
+- [x] `generate_answer()` LLM 자연어 답변 생성 -- SQL 결과 rows + 원래 질문을 LLM에 전달, 사람이 읽을 수 있는 요약 생성 [team-analysis: PROD-011b]
 
 ---
 

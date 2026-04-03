@@ -121,12 +121,57 @@ async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
 
-async def generate_answer(question: str, sql: str, rows: list[dict]) -> str:
-    """Call LLM to generate a human-friendly answer from the SQL results.
+_ANSWER_SYSTEM_PROMPT = """\
+You are a knowledgeable baseball analyst. Given a user question, the SQL query that was run,
+and the query results, provide a concise, human-friendly answer in plain English.
+Focus on the key insight; keep it to 1-3 sentences.
+"""
 
-    Currently a stub — will be wired to LLM in the next task.
+_MAX_ROWS_IN_PROMPT = 20  # Avoid bloating the context with huge result sets.
+
+
+async def generate_answer(question: str, sql: str, rows: list[dict]) -> str:
+    """Call Anthropic Claude to summarise SQL query results as a natural language answer.
+
+    Falls back gracefully when ANTHROPIC_API_KEY is not configured or when
+    there are no result rows.
+
+    Args:
+        question: The original user question.
+        sql: The SQL that was executed.
+        rows: The rows returned by execute_sql().
+
+    Returns:
+        A human-readable summary string.
     """
-    # TODO: implement LLM call to summarize results
     if not rows:
         return "No results found for your question."
-    return str(rows)
+
+    if not settings.anthropic_api_key:
+        # Graceful degradation — return a basic string representation.
+        return str(rows)
+
+    # Truncate to avoid context blowout for very large result sets.
+    display_rows = rows[:_MAX_ROWS_IN_PROMPT]
+    omitted = len(rows) - len(display_rows)
+    rows_text = str(display_rows)
+    if omitted:
+        rows_text += f"\n... and {omitted} more rows (omitted for brevity)"
+
+    user_content = (
+        f"Question: {question}\n\n"
+        f"SQL executed:\n{sql}\n\n"
+        f"Results ({len(rows)} row(s)):\n{rows_text}"
+    )
+
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    message = await client.messages.create(
+        model=_SQL_MODEL,
+        max_tokens=256,
+        system=_ANSWER_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+    )
+
+    answer = message.content[0].text.strip() if message.content else str(rows)
+    logger.debug("Generated answer for %r: %s", question, answer)
+    return answer
