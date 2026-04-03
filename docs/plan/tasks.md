@@ -16,7 +16,7 @@ Each item should be completable in a single commit.
 
 ### P0 -- Infrastructure (Sprint 2)
 
-- [ ] Alembic 초기화 -- `alembic init`, async env.py 설정, 초기 마이그레이션 --autogenerate, `main.py`의 `create_all()` 제거 [team-analysis: TD-013]
+- [x] Alembic 초기화 -- `alembic init`, async env.py 설정, 초기 마이그레이션 --autogenerate, `main.py`의 `create_all()` 제거 [team-analysis: TD-013]
 - [ ] SQL 실행 타임아웃 추가 -- `execute_sql()`에 `SET LOCAL statement_timeout = 5000` 또는 커넥션 풀 레벨 설정 [team-analysis: SEC-011]
 - [ ] Rate Limiting 추가 -- `slowapi` 설치, `/api/query`에 10 req/min per IP 제한, 429 사용자 친화적 메시지 [team-analysis: SEC-012]
 - [ ] `ingest_batting.py` 배치 upsert 전환 -- `ingest_pitching.py` 패턴 맞춤 (iterrows → to_dict('records') + 단일 conn.execute) [team-analysis: TD-014/PERF-011]

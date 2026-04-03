@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import engine, get_db
-from app.models import Base
+from app.database import get_db
 from app.schemas import QueryRequest, QueryResponse
 from app.text_to_sql import generate_sql, execute_sql, generate_answer
 
@@ -16,9 +15,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables on startup
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Schema is managed by Alembic migrations — no create_all() here.
     yield
 
 
