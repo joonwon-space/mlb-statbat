@@ -39,6 +39,16 @@ services:
     depends_on:
       - backend
 
+  data_pipeline:
+    build: ./data_pipeline
+    profiles: ["pipeline"]
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
