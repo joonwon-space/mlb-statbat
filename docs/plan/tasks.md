@@ -29,4 +29,4 @@ Each item should be completable in a single commit.
 ### P0 — UX 개선 (team-analysis 2026-04-03)
 
 - [x] 메인 페이지에 예시 질문 칩 버튼 추가 — 클릭 시 자동 입력 및 제출 [team-analysis: UX-002]
-- [ ] 쿼리 실행 중 로딩 스켈레톤/스피너 추가 — 버튼 '...' 대신 결과 영역에 표시 [team-analysis: UX-003]
+- [x] 쿼리 실행 중 로딩 스켈레톤/스피너 추가 — 버튼 '...' 대신 결과 영역에 표시 [team-analysis: UX-003]
