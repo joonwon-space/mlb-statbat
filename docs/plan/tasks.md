@@ -1,4 +1,4 @@
-# MLB StatBat — Tasks
+# MLB StatBat -- Tasks
 
 Current work items. Read by `/auto-task` and `/next-task`.
 Each item should be completable in a single commit.
@@ -7,26 +7,49 @@ Each item should be completable in a single commit.
 
 ## Current work
 
-### P0 — 데이터 수집 파이프라인
+### P0 -- Test Suite (Sprint 2 core)
 
-- [x] `PitchingStats` ORM 모델 추가 — `backend/app/models.py`에 투수 스탯 테이블 (games, games_started, innings_pitched, wins, losses, saves, strikeouts, walks, home_runs_allowed, era, whip, fip, xfip, k_per_9, bb_per_9, hr_per_9, war)
-- [x] `ingest_batting.py`에 `--qual` CLI 인자 추가 — 현재 `qual=50` 하드코딩 → argparse로 옵션화 (기본값 50 유지)
-- [x] `ingest_pitching.py` 작성 — `pybaseball.pitching_stats(season, qual)` 수집 → `PitchingStats` 테이블 upsert, `ingest_batting.py`와 동일한 패턴
-- [x] `data_pipeline/Dockerfile` 작성 — Python 3.12-slim 기반, requirements.txt 설치, entrypoint는 bash
-- [x] `docker-compose.yml`에 `data_pipeline` 서비스 추가 — `profiles: ["pipeline"]` 설정, DB 의존성, `.env` 연동
-- [x] 프론트엔드 메타데이터 수정 — `frontend/src/app/layout.tsx`의 title="MLB StatBat", description 업데이트
-- [x] `text_to_sql.py`의 `DB_SCHEMA`에 `pitching_stats` 테이블 설명 추가
+- [x] pytest 설정 추가 -- `backend/pyproject.toml` ([tool.pytest.ini_options] asyncio_mode='auto'), `conftest.py` (httpx.AsyncClient 픽스처), `pytest-asyncio` + `pytest-cov` 의존성 [team-analysis: TD-012]
+- [ ] `test_main.py` 엔드포인트 테스트 -- GET /health, POST /api/query (501 stub, 400 validation, 성공 경로 mock) [team-analysis: TD-011]
+- [ ] `test_text_to_sql.py` 확장 -- `execute_sql()` mocked AsyncSession 테스트, `generate_answer()` 스텁 테스트 [team-analysis: TD-011]
+- [ ] `test_schemas.py` 유효성 검사 테스트 -- min_length/max_length 경계값, 빈 문자열, 초과 길이 [team-analysis: TD-011]
 
-### P0 — 보안 및 안정성 (team-analysis 2026-04-03)
+### P0 -- Infrastructure (Sprint 2)
 
-- [x] `execute_sql()`에 SQL 가드 추가 — SELECT 쿼리만 허용, DROP/DELETE/UPDATE/INSERT/ALTER 차단 [team-analysis: SEC-001]
-- [x] SQL 실행 에러 메시지를 사용자에게 노출하지 않도록 변경 — 서버 로그만, 클라이언트에는 일반 메시지 [team-analysis: SEC-006]
-- [x] CORS `allow_origins`를 환경변수 기반으로 제한 — 개발: localhost, 프로덕션: statbat.joonwon.dev [team-analysis: SEC-003]
-- [x] `QueryRequest.question`에 `min_length=3, max_length=500` 유효성 검사 추가 [team-analysis: TD-005/SEC-007]
-- [x] `batting_stats.season` 컬럼에 인덱스 추가 [team-analysis: PERF-003]
-- [x] `data_pipeline/ingest_batting.py`의 `print()`를 `logging` 모듈로 교체 [team-analysis: TD-003]
+- [ ] Alembic 초기화 -- `alembic init`, async env.py 설정, 초기 마이그레이션 --autogenerate, `main.py`의 `create_all()` 제거 [team-analysis: TD-013]
+- [ ] SQL 실행 타임아웃 추가 -- `execute_sql()`에 `SET LOCAL statement_timeout = 5000` 또는 커넥션 풀 레벨 설정 [team-analysis: SEC-011]
+- [ ] Rate Limiting 추가 -- `slowapi` 설치, `/api/query`에 10 req/min per IP 제한, 429 사용자 친화적 메시지 [team-analysis: SEC-012]
+- [ ] `ingest_batting.py` 배치 upsert 전환 -- `ingest_pitching.py` 패턴 맞춤 (iterrows → to_dict('records') + 단일 conn.execute) [team-analysis: TD-014/PERF-011]
 
-### P0 — UX 개선 (team-analysis 2026-04-03)
+### P1 -- LLM Integration (마지막)
 
-- [x] 메인 페이지에 예시 질문 칩 버튼 추가 — 클릭 시 자동 입력 및 제출 [team-analysis: UX-002]
-- [x] 쿼리 실행 중 로딩 스켈레톤/스피너 추가 — 버튼 '...' 대신 결과 영역에 표시 [team-analysis: UX-003]
+- [ ] `generate_sql()` Anthropic Claude 연동 -- `text_to_sql.py`에서 `anthropic.AsyncAnthropic` 클라이언트로 `SYSTEM_PROMPT` + 유저 질문 전송, SQL 파싱 반환 [team-analysis: PROD-011]
+- [ ] `generate_answer()` LLM 자연어 답변 생성 -- SQL 결과 rows + 원래 질문을 LLM에 전달, 사람이 읽을 수 있는 요약 생성 [team-analysis: PROD-011b]
+
+---
+
+## Completed (Sprint 1)
+
+### P0 -- Data Pipeline
+
+- [x] `PitchingStats` ORM model added
+- [x] `ingest_batting.py` --qual CLI arg
+- [x] `ingest_pitching.py` created
+- [x] `data_pipeline/Dockerfile` created
+- [x] docker-compose data_pipeline service
+- [x] Frontend metadata update
+- [x] `DB_SCHEMA` pitching_stats description
+
+### P0 -- Security & Stability
+
+- [x] SQL guard (SELECT-only with sqlparse) + 25 tests
+- [x] Error message sanitization
+- [x] CORS env-based restriction
+- [x] QueryRequest min_length/max_length validation
+- [x] batting_stats.season index
+- [x] Pipeline print() -> logging
+
+### P0 -- UX
+
+- [x] Example question chips
+- [x] Loading skeleton/spinner
