@@ -9,7 +9,7 @@ A natural language baseball statistics query app. Ask questions in plain English
 | Backend | FastAPI (Python 3.12), SQLAlchemy async, PostgreSQL 16 |
 | Frontend | Next.js (TypeScript), Tailwind CSS, shadcn/ui |
 | Data Pipeline | pybaseball (FanGraphs), pandas, psycopg2 |
-| LLM | Anthropic Claude / OpenAI (text-to-SQL; stub — not yet wired) |
+| LLM | Anthropic Claude (claude-haiku-4-5, text-to-SQL — live) |
 | Infrastructure | Docker Compose, Cloudflare Tunnel |
 
 ## Quick Start
@@ -57,26 +57,45 @@ python ingest_batting.py --season 2025
 python ingest_pitching.py --season 2025
 ```
 
+## Running Tests
+
+```bash
+cd backend
+pip install -r requirements.txt
+pytest
+```
+
+Configuration is in `backend/pyproject.toml`. pytest-asyncio runs async tests automatically; pytest-cov reports coverage. `text_to_sql.py` has 100% coverage.
+
 ## Project Structure
 
 ```
 mlb-statbat/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py          # FastAPI entry point and route definitions
-│   │   ├── text_to_sql.py   # LLM-powered query generation (stub)
+│   │   ├── main.py          # FastAPI entry point, routes, rate limiter
+│   │   ├── text_to_sql.py   # LLM-powered query generation (live, Anthropic)
 │   │   ├── models.py        # SQLAlchemy models (Player, BattingStats, PitchingStats)
 │   │   ├── schemas.py       # Pydantic request/response schemas
 │   │   ├── database.py      # Async DB session setup
 │   │   └── config.py        # pydantic-settings environment config
+│   ├── alembic/             # Alembic migration framework
+│   │   ├── env.py           # Async-compatible migration environment
+│   │   └── versions/        # Migration scripts
+│   ├── tests/               # pytest test suite (77 tests)
+│   │   ├── conftest.py      # Shared fixtures
+│   │   ├── test_main.py     # Endpoint integration tests
+│   │   ├── test_schemas.py  # Schema validation tests
+│   │   └── test_text_to_sql.py  # text_to_sql unit tests (100% coverage)
+│   ├── pyproject.toml       # pytest + coverage configuration
 │   └── requirements.txt
 ├── frontend/
 │   └── src/
 │       ├── app/             # Next.js app router pages
 │       └── lib/api.ts       # API client (queryStats)
 ├── data_pipeline/
-│   ├── ingest_batting.py    # FanGraphs batting stats ingestion
-│   └── ingest_pitching.py   # FanGraphs pitching stats ingestion
+│   ├── ingest_batting.py    # FanGraphs batting stats ingestion (batch upsert)
+│   └── ingest_pitching.py   # FanGraphs pitching stats ingestion (batch upsert)
 ├── docs/
 │   ├── architecture/        # Technical architecture docs
 │   └── setup/              # Deployment and infrastructure guides

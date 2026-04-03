@@ -24,9 +24,9 @@ Returns the service health status.
 
 ### POST /api/query
 
-Accepts a natural language baseball question, converts it to SQL via an LLM, executes it, and returns the result with a human-friendly answer.
+Accepts a natural language baseball question, converts it to SQL via Anthropic Claude (claude-haiku-4-5), executes it against PostgreSQL, and returns the result with a human-friendly natural language answer.
 
-> **Note:** The LLM integration is currently a stub. This endpoint returns HTTP 501 until `generate_sql` in `backend/app/text_to_sql.py` is wired to a real LLM provider.
+Rate-limited to **10 requests per minute per IP address** (slowapi). Exceeding the limit returns HTTP 429.
 
 - **Request body** (`QueryRequest`):
   ```json
@@ -60,7 +60,8 @@ Accepts a natural language baseball question, converts it to SQL via an LLM, exe
 
   | Status | Condition |
   |--------|-----------|
-  | 400 | SQL guard rejected the generated query (non-SELECT, multi-statement, or SELECT INTO) |
+  | 400 | SQL guard rejected the generated query (non-SELECT, multi-statement, SELECT INTO, or blocked function: `pg_sleep`, `dblink`, `lo_import`, `lo_export`, `pg_read_file`, `pg_write_file`, `pg_terminate_backend`, `pg_cancel_backend`) |
   | 422 | Request validation failed (`question` missing, too short (<3), or too long (>500)) |
+  | 429 | Rate limit exceeded (10 req/min per IP) |
   | 500 | SQL execution failed — internal error, generic message returned to caller |
-  | 501 | LLM integration not configured |
+  | 501 | LLM integration not configured (`ANTHROPIC_API_KEY` absent) |
