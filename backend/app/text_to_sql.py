@@ -1,16 +1,10 @@
 import logging
-import re
 
+import sqlparse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
-
-# Patterns for SQL statements that must never be executed
-_BLOCKED_STATEMENTS = re.compile(
-    r"^\s*(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b",
-    re.IGNORECASE,
-)
 
 # DB schema description for the LLM prompt
 DB_SCHEMA = """
@@ -59,14 +53,19 @@ async def generate_sql(question: str) -> str:
 def _validate_select_only(sql: str) -> None:
     """Raise ValueError if sql contains any non-SELECT statement.
 
-    Only SELECT queries are permitted. Any attempt to execute DDL or DML
-    (DROP, DELETE, UPDATE, INSERT, ALTER, etc.) is rejected immediately.
+    Uses sqlparse to properly parse the SQL and verify:
+    1. Exactly one statement (no multi-statement injection via semicolons)
+    2. That single statement is a SELECT (not DML/DDL)
     """
-    stripped = sql.strip()
-    if _BLOCKED_STATEMENTS.match(stripped):
+    parsed = sqlparse.parse(sql)
+    # Filter out empty/whitespace-only statements
+    statements = [s for s in parsed if s.get_type() is not None]
+    if len(statements) != 1:
+        raise ValueError("Exactly one SQL statement is allowed")
+    stmt = statements[0]
+    stmt_type = stmt.get_type()
+    if stmt_type != "SELECT":
         raise ValueError("Only SELECT queries are permitted")
-    if not re.match(r"^\s*SELECT\b", stripped, re.IGNORECASE):
-        raise ValueError("Query must start with SELECT")
 
 
 async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:
