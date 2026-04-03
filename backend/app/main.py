@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -8,6 +9,8 @@ from app.database import engine, get_db
 from app.models import Base
 from app.schemas import QueryRequest, QueryResponse
 from app.text_to_sql import generate_sql, execute_sql, generate_answer
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -43,8 +46,15 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
 
     try:
         rows = await execute_sql(db, sql)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"SQL execution error: {e}")
+    except ValueError as e:
+        # SQL guard rejected the query — safe to surface the reason
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("SQL execution failed for question: %r", req.question)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to execute the generated query. Please try rephrasing your question.",
+        )
 
     answer = await generate_answer(req.question, sql, rows)
 
