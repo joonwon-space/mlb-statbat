@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, Float, SmallInteger, UniqueConstraint
+from sqlalchemy import Float, Index, Integer, SmallInteger, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -24,6 +24,7 @@ class BattingStats(Base):
     __tablename__ = "batting_stats"
     __table_args__ = (
         UniqueConstraint("player_mlb_id", "season", name="uq_batting_player_season"),
+        Index("ix_batting_stats_season", "season"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -53,4 +54,40 @@ class BattingStats(Base):
     wrc_plus: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Advanced
+    war: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class PitchingStats(Base):
+    __tablename__ = "pitching_stats"
+    __table_args__ = (
+        UniqueConstraint("player_mlb_id", "season", name="uq_pitching_player_season"),
+        Index("ix_pitching_stats_season", "season"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    player_mlb_id: Mapped[int] = mapped_column(Integer, index=True)
+    season: Mapped[int] = mapped_column(SmallInteger)
+    team: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # Counting stats
+    games: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    games_started: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    innings_pitched: Mapped[float | None] = mapped_column(Float, nullable=True)
+    wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    losses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    saves: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    strikeouts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    walks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    home_runs_allowed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Rate stats
+    era: Mapped[float | None] = mapped_column(Float, nullable=True)
+    whip: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fip: Mapped[float | None] = mapped_column(Float, nullable=True)
+    k_per_9: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bb_per_9: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hr_per_9: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Advanced
+    xfip: Mapped[float | None] = mapped_column(Float, nullable=True)
     war: Mapped[float | None] = mapped_column(Float, nullable=True)
