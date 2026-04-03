@@ -6,6 +6,7 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 
 import pandas as pd
@@ -15,6 +16,9 @@ from sqlalchemy import create_engine, text
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+psycopg2://statbat:changeme@localhost:5432/statbat",
@@ -23,9 +27,9 @@ DATABASE_URL = os.getenv(
 
 def fetch_pitching(season: int, qual: int = 30) -> pd.DataFrame:
     """Fetch season pitching stats via pybaseball."""
-    print(f"Fetching {season} pitching stats from FanGraphs (qual={qual})...")
+    logger.info("Fetching %d pitching stats from FanGraphs (qual=%d)...", season, qual)
     df = pitching_stats(season, qual=qual)
-    print(f"  Retrieved {len(df)} pitcher rows")
+    logger.info("Retrieved %d pitcher rows", len(df))
     return df
 
 
@@ -116,7 +120,7 @@ def load(players: pd.DataFrame, stats: pd.DataFrame) -> None:
                 values,
             )
 
-    print(f"  Loaded {len(players)} players, {len(stats)} pitching stat rows")
+    logger.info("Loaded %d players, %d pitching stat rows", len(players), len(stats))
 
 
 def main():
@@ -133,7 +137,7 @@ def main():
     df = fetch_pitching(args.season, qual=args.qual)
     players, stats = transform(df, args.season)
     load(players, stats)
-    print("Done!")
+    logger.info("Done!")
 
 
 if __name__ == "__main__":
