@@ -134,3 +134,16 @@ class TestQueryEndpoint:
         # Must not leak raw exception message
         assert "connection lost" not in detail
         assert "rephrasing" in detail
+
+    async def test_rate_limit_handler_registered(self) -> None:
+        """The 429 error handler must be registered on the app."""
+        from slowapi.errors import RateLimitExceeded
+        from app.main import app as fastapi_app
+
+        assert RateLimitExceeded in fastapi_app.exception_handlers
+
+    async def test_rate_limiter_attached_to_app_state(self) -> None:
+        """The limiter must be attached to app.state so slowapi middleware works."""
+        from app.main import app as fastapi_app, limiter
+
+        assert fastapi_app.state.limiter is limiter
