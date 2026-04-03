@@ -1,4 +1,5 @@
 import pytest
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.text_to_sql import (
@@ -128,26 +129,44 @@ class TestValidateSelectOnly:
         with pytest.raises(ValueError):
             _validate_select_only("EXPLAIN SELECT * FROM players")
 
+    # --- Blocked: dangerous functions ---
+
+    def test_pg_sleep_blocked(self) -> None:
+        with pytest.raises(ValueError, match="PG_SLEEP"):
+            _validate_select_only("SELECT pg_sleep(300)")
+
+    def test_dblink_blocked(self) -> None:
+        with pytest.raises(ValueError, match="DBLINK"):
+            _validate_select_only("SELECT * FROM dblink('host=evil', 'SELECT 1')")
+
+    def test_pg_read_file_blocked(self) -> None:
+        with pytest.raises(ValueError, match="PG_READ_FILE"):
+            _validate_select_only("SELECT pg_read_file('/etc/passwd')")
+
 
 class TestExecuteSql:
-    """Tests for execute_sql() using a mocked AsyncSession."""
+    """Tests for execute_sql() using a mocked AsyncSession.
+
+    execute_sql now runs inside `async with db.begin():` and uses fetchmany().
+    The mock must support the async context manager protocol on begin().
+    """
 
     def _make_mock_session(
         self, columns: list[str], rows: list[tuple]
-    ) -> AsyncMock:
-        """Build a mock AsyncSession that returns given columns and rows.
-
-        execute_sql makes two execute() calls:
-          1. SET LOCAL statement_timeout = 5000  (returns a dummy result)
-          2. The actual SELECT query              (returns the data result)
-        """
-        session = AsyncMock()
-        timeout_result = MagicMock()
+    ) -> MagicMock:
+        """Build a mock AsyncSession with begin() async context manager."""
+        session = MagicMock()
         data_result = MagicMock()
         data_result.keys.return_value = columns
-        data_result.fetchall.return_value = rows
-        # First call -> timeout SET, second call -> data
-        session.execute.side_effect = [timeout_result, data_result]
+        data_result.fetchmany.return_value = rows
+        timeout_result = MagicMock()
+        session.execute = AsyncMock(side_effect=[timeout_result, data_result])
+
+        @asynccontextmanager
+        async def fake_begin():
+            yield
+
+        session.begin = fake_begin
         return session
 
     async def test_returns_list_of_dicts(self) -> None:
@@ -179,11 +198,18 @@ class TestExecuteSql:
         session.execute.assert_not_called()
 
     async def test_reraises_db_exception(self) -> None:
-        """DB error on the actual SELECT should propagate after SET LOCAL."""
-        session = AsyncMock()
+        """DB error on the actual SELECT should propagate."""
+        session = MagicMock()
         timeout_result = MagicMock()
-        # First call (SET LOCAL) succeeds; second call raises
-        session.execute.side_effect = [timeout_result, RuntimeError("DB connection lost")]
+        session.execute = AsyncMock(
+            side_effect=[timeout_result, RuntimeError("DB connection lost")]
+        )
+
+        @asynccontextmanager
+        async def fake_begin():
+            yield
+
+        session.begin = fake_begin
         with pytest.raises(RuntimeError, match="DB connection lost"):
             await execute_sql(session, "SELECT * FROM players")
 
@@ -191,7 +217,6 @@ class TestExecuteSql:
         """execute_sql must issue SET LOCAL statement_timeout before the query."""
         session = self._make_mock_session(columns=["id"], rows=[(1,)])
         await execute_sql(session, "SELECT id FROM players")
-        # First call must be the SET LOCAL statement
         first_call_arg = session.execute.call_args_list[0].args[0]
         assert "statement_timeout" in str(first_call_arg)
         assert "5000" in str(first_call_arg)

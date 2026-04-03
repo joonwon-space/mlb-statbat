@@ -1,11 +1,15 @@
 """Shared pytest fixtures for the MLB StatBat backend test suite."""
 
+import os
 import pytest
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, MagicMock
 
-from app.main import app
-from app.database import get_db
+# Set required env var before importing app (config.py requires DATABASE_URL)
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+
+from app.main import app  # noqa: E402
+from app.database import get_db  # noqa: E402
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://statbat:changeme@db:5432/statbat"
+    database_url: str
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     # Comma-separated list of allowed CORS origins.

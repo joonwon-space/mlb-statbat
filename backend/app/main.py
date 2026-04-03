@@ -71,6 +71,10 @@ async def query(request: Request, req: QueryRequest, db: AsyncSession = Depends(
             detail="Failed to execute the generated query. Please try rephrasing your question.",
         )
 
-    answer = await generate_answer(req.question, sql, rows)
+    try:
+        answer = await generate_answer(req.question, sql, rows)
+    except Exception:
+        logger.exception("Answer generation failed for question: %r", req.question)
+        answer = str(rows)
 
     return QueryResponse(question=req.question, sql=sql, result=rows, answer=answer)

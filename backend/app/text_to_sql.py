@@ -99,26 +99,40 @@ def _validate_select_only(sql: str) -> None:
         for t in stmt.flatten()
     ):
         raise ValueError("SELECT INTO is not permitted")
+    # Block dangerous PostgreSQL functions (DoS vectors)
+    sql_upper = sql.upper()
+    _BLOCKED_FUNCTIONS = [
+        "PG_SLEEP", "DBLINK", "LO_IMPORT", "LO_EXPORT",
+        "PG_READ_FILE", "PG_WRITE_FILE", "PG_TERMINATE_BACKEND",
+        "PG_CANCEL_BACKEND",
+    ]
+    for func in _BLOCKED_FUNCTIONS:
+        if func in sql_upper:
+            raise ValueError(f"Function {func} is not permitted")
+
+
+_MAX_RESULT_ROWS = 1000  # Hard cap on returned rows to prevent memory blowout.
 
 
 async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:
     """Execute generated SQL and return rows as list of dicts.
 
     Only SELECT queries are allowed. Raises ValueError for any other statement.
-    A 5-second statement timeout is enforced at the session level so that
-    runaway LLM-generated queries cannot hold a connection indefinitely.
+    A 5-second statement timeout is enforced inside an explicit transaction
+    so that SET LOCAL takes effect.
+    Results are capped at _MAX_RESULT_ROWS to prevent memory exhaustion.
     """
     _validate_select_only(sql)
     try:
-        # Apply a per-statement timeout (5 000 ms) before running the query.
-        # SET LOCAL is scoped to the current transaction block only.
-        await db.execute(text("SET LOCAL statement_timeout = 5000"))
-        result = await db.execute(text(sql))
+        async with db.begin():
+            await db.execute(text("SET LOCAL statement_timeout = 5000"))
+            result = await db.execute(text(sql))
+            columns = list(result.keys())
+            rows = result.fetchmany(_MAX_RESULT_ROWS)
     except Exception:
         logger.exception("SQL execution failed for query: %s", sql)
         raise
-    columns = list(result.keys())
-    return [dict(zip(columns, row)) for row in result.fetchall()]
+    return [dict(zip(columns, row)) for row in rows]
 
 
 _ANSWER_SYSTEM_PROMPT = """\
