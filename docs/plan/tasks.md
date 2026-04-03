@@ -14,7 +14,7 @@ Each item should be completable in a single commit.
 - [x] `ingest_pitching.py` 작성 — `pybaseball.pitching_stats(season, qual)` 수집 → `PitchingStats` 테이블 upsert, `ingest_batting.py`와 동일한 패턴
 - [x] `data_pipeline/Dockerfile` 작성 — Python 3.12-slim 기반, requirements.txt 설치, entrypoint는 bash
 - [x] `docker-compose.yml`에 `data_pipeline` 서비스 추가 — `profiles: ["pipeline"]` 설정, DB 의존성, `.env` 연동
-- [ ] 프론트엔드 메타데이터 수정 — `frontend/src/app/layout.tsx`의 title="MLB StatBat", description 업데이트
+- [x] 프론트엔드 메타데이터 수정 — `frontend/src/app/layout.tsx`의 title="MLB StatBat", description 업데이트
 - [ ] `text_to_sql.py`의 `DB_SCHEMA`에 `pitching_stats` 테이블 설명 추가
 
 ### P0 — 보안 및 안정성 (team-analysis 2026-04-03)
