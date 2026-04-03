@@ -1,34 +1,52 @@
 {
   "agent": "performance-reviewer",
-  "summary": "Fix #4 (bulk executemany replacing N+1 INSERTs) is the most significant performance improvement in this diff and is correctly implemented. Both the player upsert and pitching stats upsert now use a single conn.execute() call with a list of dicts, which SQLAlchemy translates to executemany at the driver level — this eliminates 800+ round-trips per ingest run. Fix #1 (sqlparse validation) adds one synchronous pure-Python parse call per query execution in the async hot path; this is acceptable overhead at current traffic levels but blocks the event loop. Two medium concerns from the prior review cycle remain open: no LIMIT clause guidance in the LLM prompt (unbounded fetchall() could return thousands of rows), and the loading skeleton has no minimum display threshold causing visual flicker on fast responses. The bulk executemany fix is confirmed correct — no N+1 issues remain in ingest_pitching.py.",
+  "summary": "The Sprint 2 changes introduce no new N+1 query patterns and the batch upsert conversion in ingest_batting.py is a meaningful performance improvement over row-by-row iteration. The rate limiter addition is appropriate. However, several performance concerns exist: the Anthropic client is instantiated per-request creating unnecessary connection pool churn; there is no caching for identical LLM questions meaning the same query costs two API round-trips every time; execute_sql fetches all rows via fetchall() with no pagination or LIMIT enforcement, meaning a poorly-formed LLM query returning 100k rows will load the entire result set into memory; and the ingest pipeline loads all pybaseball rows into memory as a DataFrame before transformation, which could be an issue for full-season data. The rate limit of 10 req/min is a partial mitigation for the memory risk but not a proper fix.",
   "verdict": "request-changes",
   "findings": [
     {
       "id": "PERF-001",
-      "title": "No row cap on execute_sql() fetchall() — unbounded result sets",
-      "severity": "medium",
-      "category": "api",
-      "location": "backend/app/text_to_sql.py:76-78",
-      "detail": "execute_sql() calls result.fetchall() with no row limit. The SYSTEM_PROMPT does not instruct the LLM to add LIMIT clauses. Questions like 'show me all batting stats' or 'list every pitcher' could cause the LLM to generate a limitless SELECT, returning entire tables. For batting_stats with 5 seasons x 500 players = 2500+ rows, the API response JSON would exceed 1MB and require several seconds of serialization. Each row dict takes ~500 bytes in memory. This was flagged in the prior review cycle and remains unaddressed.",
-      "fix": "Add a hard cap: replace `result.fetchall()` with `result.fetchmany(1000)`. Also add to SYSTEM_PROMPT: 'Always include LIMIT 100 in your queries unless the user explicitly asks for all results.' Return a truncation metadata field in QueryResponse when results are capped."
+      "title": "execute_sql fetches all rows into memory with no LIMIT guard",
+      "severity": "high",
+      "category": "database",
+      "location": "backend/app/text_to_sql.py:120-121",
+      "detail": "result.fetchall() loads the complete result set into Python memory. The LLM could generate a valid SELECT without a LIMIT clause (e.g., SELECT * FROM batting_stats) returning tens of thousands of rows. At ~500 bytes per row, 50k rows = 25MB per request. At the 10 req/min rate limit, this is 250MB/min of peak memory allocation before GC. Under concurrent load this causes memory pressure and potential OOM. The result is then passed to generate_answer() which truncates to 20 rows for the LLM prompt — so the extra rows are fetched but never used.",
+      "fix": "Enforce a maximum row count at the database level: add `LIMIT 1000` to the query if no LIMIT is present (parse with sqlparse to detect existing LIMIT tokens). Alternatively use `result.fetchmany(1000)` instead of `fetchall()` and document the truncation behavior. Add a response field `result_truncated: bool` to the schema."
     },
     {
       "id": "PERF-002",
-      "title": "sqlparse.parse() runs synchronously on every query — event loop blocked",
-      "severity": "low",
+      "title": "No caching for identical LLM questions — two API calls per request",
+      "severity": "medium",
       "category": "api",
-      "location": "backend/app/text_to_sql.py:55-68",
-      "detail": "sqlparse is a pure-Python parser with no C extension. For complex SQL (CTEs, many JOINs), parse() can take 1-5ms. This runs synchronously inside the async execute_sql() coroutine, blocking the asyncio event loop for the duration of each request's validation step. At current traffic (stub LLM, minimal users), this is negligible. At 100+ concurrent requests/second once LLM is live, this becomes a measurable bottleneck.",
-      "fix": "Wrap the synchronous call: `await asyncio.get_event_loop().run_in_executor(None, _validate_select_only, sql)`. This offloads parsing to a thread pool without blocking the event loop. Defer this optimization until profiling confirms it matters in production."
+      "location": "backend/app/text_to_sql.py:51-77,133-177",
+      "detail": "Every call to POST /api/query makes two Anthropic API calls: generate_sql() and generate_answer(). For a common question like 'Who led the league in home runs in 2024?' asked repeatedly (e.g., by multiple users or a client polling), these calls cost real money and add ~1-2 seconds of latency per request. The LLM output for a given question is deterministic for the SQL step (same schema, same question = same SQL) and could be cached.",
+      "fix": "Implement an in-memory LRU cache for generate_sql() keyed on the normalized question: `from functools import lru_cache`. For generate_answer(), caching is harder (rows may differ) but the SQL→answer mapping could be cached when row counts are small. Use `cachetools.TTLCache(maxsize=500, ttl=3600)` for a time-bounded cache. Start with just generate_sql() caching as it provides the most benefit."
     },
     {
       "id": "PERF-003",
-      "title": "Loading skeleton flickers on fast API responses — no minimum display threshold",
+      "title": "Anthropic client re-instantiated per request — connection pool churn",
+      "severity": "medium",
+      "category": "api",
+      "location": "backend/app/text_to_sql.py:62,167",
+      "detail": "Both generate_sql() and generate_answer() create a new `anthropic.AsyncAnthropic()` instance on every invocation. Each instance creates its own httpx.AsyncClient with a new connection pool. Under 10 req/min this results in 20 new HTTP clients/min being created and destroyed. This wastes TCP handshakes to the Anthropic API endpoint and increases per-request latency by the connection establishment time (~50-100ms for TLS to api.anthropic.com). It also risks exhausting ephemeral ports under higher load.",
+      "fix": "Create a single module-level AsyncAnthropic client (initialized lazily on first use or at app startup in the lifespan function): `_anthropic_client: anthropic.AsyncAnthropic | None = None`. Initialize it once and reuse it across all calls."
+    },
+    {
+      "id": "PERF-004",
+      "title": "Missing DB foreign key index: batting_stats has no FK constraint to players",
       "severity": "low",
-      "category": "rendering",
-      "location": "frontend/src/app/page.tsx:101",
-      "detail": "The loading skeleton renders immediately when loading becomes true. For fast responses (sub-300ms), the skeleton appears and disappears in a flash — visual noise that is worse than the previous approach. This was flagged in the prior review cycle and remains unaddressed.",
-      "fix": "Add a delayed skeleton state: `const [showSkeleton, setShowSkeleton] = useState(false); useEffect(() => { if (!loading) { setShowSkeleton(false); return; } const t = setTimeout(() => setShowSkeleton(true), 300); return () => clearTimeout(t); }, [loading]);` Render skeleton only when `showSkeleton && loading`."
+      "category": "database",
+      "location": "backend/alembic/versions/0001_initial_schema.py:66-69",
+      "detail": "batting_stats.player_mlb_id has an index (ix_batting_stats_player_mlb_id) but no foreign key constraint to players.mlb_id. This means JOIN queries between players and batting_stats rely on the index but the planner cannot use constraint-based optimizations. More importantly, orphaned batting_stats rows (no matching player) can accumulate silently, causing JOIN queries to return unexpected nulls and making index usage less efficient over time.",
+      "fix": "Add a FK constraint in the migration: `sa.ForeignKeyConstraint(['player_mlb_id'], ['players.mlb_id'], name='fk_batting_stats_player')`. Same for pitching_stats. The index already exists so the constraint adds referential integrity without performance cost."
+    },
+    {
+      "id": "PERF-005",
+      "title": "ingest_batting.py loads all FanGraphs data into memory before transform",
+      "severity": "low",
+      "category": "database",
+      "location": "data_pipeline/ingest_batting.py:33-35",
+      "detail": "fetch_batting() loads the full season's batting stats into a pandas DataFrame in memory. For qual=1 (all players) this could be 1000+ rows with many columns. While this is not a problem for a typical season (manageable size), if the pipeline is extended to historical data (multiple seasons), memory usage grows linearly. The current approach also holds the entire DataFrame in memory during the transform and load phases.",
+      "fix": "For current scope (single season, ~300-600 rows with qual=50) this is acceptable. Document the known limitation: add a comment `# For multi-season historical loads, consider chunked processing`. This is a low-priority future concern, not a current blocker."
     }
   ]
 }

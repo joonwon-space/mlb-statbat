@@ -1,116 +1,95 @@
 {
   "agent": "tech-debt-analyst",
-  "summary": "The codebase is very early-stage (~741 lines total) with clean structure but critical foundational gaps: zero test coverage, no logging framework, print() statements in production code, row-by-row database inserts in the data pipeline, and create_all() instead of Alembic migrations. The small size means tech debt is manageable now but will compound quickly as features are added.",
+  "date": "2026-04-03-sprint2",
+  "summary": "Sprint 1 fixed the SQL guard, input validation, CORS, and logging. However, backend test coverage remains critically low at ~13% (25 tests in a single file covering only _validate_select_only). No tests exist for main.py endpoints, schemas.py, config.py, database.py, or the data pipeline. Alembic is listed in requirements.txt but never initialized -- create_all() is still the only schema management. The ingest_batting.py still uses row-by-row iterrows() while ingest_pitching.py was written with batch executemany. Two TODO stubs remain in text_to_sql.py. No conftest.py or pytest configuration exists.",
   "findings": [
     {
-      "id": "TD-001",
-      "title": "Zero test coverage across entire project",
+      "id": "TD-011",
+      "title": "Backend test coverage at 13% -- only SQL guard tested",
       "category": "test-gap",
       "severity": "critical",
       "effort": "M",
       "impact": "reliability",
-      "location": "backend/, frontend/src/, data_pipeline/",
-      "detail": "No test files exist anywhere in the project. No pytest fixtures, no component tests, no e2e tests. Every change carries regression risk with no safety net.",
-      "recommendation": "Create backend/tests/ with pytest fixtures for AsyncSession mock. Add test_main.py (health endpoint), test_text_to_sql.py (execute_sql, generate_answer stubs). Add frontend/__tests__/ with page.test.tsx. Target 80% backend coverage first."
+      "location": "backend/tests/",
+      "detail": "25 tests exist but all test _validate_select_only only. No tests for: POST /api/query endpoint (success, 400, 501, 500 paths), GET /health, QueryRequest validation (min_length/max_length), generate_sql() NotImplementedError, generate_answer() stub, execute_sql() with mocked DB. Coverage target is 80% but current is ~13%.",
+      "recommendation": "Create backend/tests/conftest.py with async test fixtures (httpx.AsyncClient + TestClient), then add test_main.py (5 endpoint tests), test_schemas.py (validation edge cases), expand test_text_to_sql.py with execute_sql tests using mocked AsyncSession."
     },
     {
-      "id": "TD-002",
-      "title": "Row-by-row upsert in data pipeline instead of batch operations",
-      "category": "code-smell",
+      "id": "TD-012",
+      "title": "No pytest configuration (conftest.py, pyproject.toml [tool.pytest])",
+      "category": "test-gap",
       "severity": "high",
-      "effort": "M",
-      "impact": "maintainability",
-      "location": "data_pipeline/ingest_batting.py:87-116",
-      "detail": "Both player upsert (line 87) and batting stats upsert (line 100) iterate row-by-row with iterrows(), executing individual SQL statements. For 300+ players per season this is slow and generates excessive DB round-trips. The dynamic SQL construction with f-strings is also fragile.",
-      "recommendation": "Use executemany() with a single parameterized upsert statement, or use pandas to_sql() with method='multi' + a custom upsert function. Alternatively use psycopg2.extras.execute_values() for batch insert."
-    },
-    {
-      "id": "TD-003",
-      "title": "print() statements instead of logging module",
-      "category": "code-smell",
-      "severity": "medium",
       "effort": "S",
-      "impact": "maintainability",
-      "location": "data_pipeline/ingest_batting.py:25,27,118,129",
-      "detail": "Four print() statements used for operational output. No way to control log levels, no timestamps, no structured logging. When the pipeline fails silently or partially, debugging will be difficult.",
-      "recommendation": "Replace print() with Python logging module. Add logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s') at module level. Use logger.info() for progress, logger.error() for failures."
+      "impact": "developer-experience",
+      "location": "backend/",
+      "detail": "No conftest.py for shared fixtures, no pyproject.toml or pytest.ini for test settings (asyncio_mode, test paths, coverage config). Tests run but without proper async support -- needed for testing async endpoints and DB operations.",
+      "recommendation": "Add backend/pyproject.toml with [tool.pytest.ini_options] asyncio_mode='auto', testpaths=['tests']. Add conftest.py with app fixture using httpx.ASGITransport for async endpoint testing. Add pytest-asyncio and pytest-cov to requirements.txt."
     },
     {
-      "id": "TD-004",
-      "title": "Database schema managed by create_all() instead of Alembic",
+      "id": "TD-013",
+      "title": "Alembic in requirements.txt but never initialized",
       "category": "architecture",
       "severity": "high",
       "effort": "M",
       "impact": "maintainability",
-      "location": "backend/app/main.py:14-17",
-      "detail": "Tables are created via Base.metadata.create_all() on every app startup. This cannot handle column additions, type changes, or data migrations. Adding PitchingStats model will require dropping and recreating tables, losing data.",
-      "recommendation": "Run 'alembic init' in backend/, configure alembic.ini with async engine, create initial migration from existing models. Remove create_all() from lifespan. Alembic is already in requirements.txt but unused."
+      "location": "backend/",
+      "detail": "alembic==1.14.1 is installed but no alembic/ directory, alembic.ini, or migration files exist. Schema is managed by create_all() in main.py lifespan. This means: (1) schema changes require recreating tables, (2) no migration history, (3) production deployments are risky. This was flagged in Sprint 1 but not addressed.",
+      "recommendation": "Run alembic init alembic in backend/, configure env.py for async, create initial migration with --autogenerate, replace create_all() with alembic upgrade head in docker-compose."
     },
     {
-      "id": "TD-005",
-      "title": "No input validation on QueryRequest.question field",
-      "category": "code-smell",
-      "severity": "medium",
-      "effort": "S",
-      "impact": "reliability",
-      "location": "backend/app/schemas.py:4-5",
-      "detail": "QueryRequest accepts any string including empty strings, extremely long strings (potential DoS), or strings with control characters. No min/max length constraint, no sanitization.",
-      "recommendation": "Add Pydantic Field validators: question: str = Field(..., min_length=3, max_length=500, description='Natural language question about MLB stats'). Add a strip_whitespace validator."
-    },
-    {
-      "id": "TD-006",
-      "title": "generate_answer() returns raw str(rows) — not LLM stub but bad fallback",
+      "id": "TD-014",
+      "title": "ingest_batting.py still uses row-by-row iterrows() for stats upsert",
       "category": "code-smell",
       "severity": "medium",
       "effort": "S",
       "impact": "maintainability",
-      "location": "backend/app/text_to_sql.py:51-59",
-      "detail": "The generate_answer stub returns str(rows) which produces Python dict repr like \"[{'name': 'Ohtani', 'ops': 1.012}]\" — unreadable for users. Even as a stub, it should format results minimally.",
-      "recommendation": "Until LLM is wired, format as a simple table string or JSON pretty-print. Add a TODO marker for LLM integration with a clear contract for the expected output format."
+      "location": "data_pipeline/ingest_batting.py:107",
+      "detail": "ingest_pitching.py uses batch executemany pattern but ingest_batting.py still iterates row-by-row with dynamic SQL construction per row. This is an inconsistency -- same pattern should be used in both scripts. The row-by-row version is also 20-30x slower for large datasets.",
+      "recommendation": "Refactor ingest_batting.py load() to match ingest_pitching.py's bulk upsert pattern: stats.where(stats.notna(), None).to_dict('records') + single conn.execute()."
     },
     {
-      "id": "TD-007",
-      "title": "No database connection pool configuration",
-      "category": "architecture",
+      "id": "TD-015",
+      "title": "No frontend tests at all",
+      "category": "test-gap",
       "severity": "medium",
-      "effort": "S",
-      "impact": "reliability",
-      "location": "backend/app/database.py:5",
-      "detail": "create_async_engine uses default pool settings (pool_size=5, max_overflow=10). No pool_pre_ping for connection health checks, no pool_recycle for stale connections. Under load or after DB restarts, connections may fail silently.",
-      "recommendation": "Add pool_pre_ping=True, pool_size=10, max_overflow=20, pool_recycle=3600 to create_async_engine(). These are safe defaults for a small app."
-    },
-    {
-      "id": "TD-008",
-      "title": "Data pipeline uses synchronous psycopg2 but backend uses asyncpg",
-      "category": "architecture",
-      "severity": "low",
-      "effort": "S",
-      "impact": "developer-experience",
-      "location": "data_pipeline/ingest_batting.py:19",
-      "detail": "The pipeline replaces 'asyncpg' with 'psycopg2' in the DATABASE_URL. This works but is a maintenance risk — two different DB drivers, two different connection patterns. If DATABASE_URL format changes, the replace() could break.",
-      "recommendation": "Accept a separate SYNC_DATABASE_URL env var, or use a dedicated pipeline DATABASE_URL that uses psycopg2 natively. Document the dual-driver pattern."
-    },
-    {
-      "id": "TD-009",
-      "title": "Frontend page.tsx is a single monolithic 'use client' component",
-      "category": "architecture",
-      "severity": "low",
       "effort": "M",
-      "impact": "maintainability",
-      "location": "frontend/src/app/page.tsx",
-      "detail": "The entire page including form, results display, error handling, and table rendering is in a single 144-line client component. As features are added (history, example questions, visualizations), this will grow unwieldy. The 'use client' directive also prevents server-side rendering of the page shell.",
-      "recommendation": "Extract into: QueryForm component, QueryResults component, ResultsTable component, ErrorDisplay component. Keep the page.tsx as a server component with client islands."
+      "impact": "reliability",
+      "location": "frontend/src/",
+      "detail": "Zero test files in frontend/src/. No testing framework configured (no jest, vitest, or playwright in devDependencies). The page.tsx component has 189 lines of untested UI logic including form submission, chip clicks, error handling, and loading states.",
+      "recommendation": "Add vitest + @testing-library/react to devDependencies. Create __tests__/page.test.tsx with tests for: form submission, chip click auto-submit, error display, loading skeleton visibility, results table rendering."
     },
     {
-      "id": "TD-010",
-      "title": "No .env.example file for developer onboarding",
+      "id": "TD-016",
+      "title": "Duplicate player upsert logic in both ingest scripts",
       "category": "code-smell",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "maintainability",
+      "location": "data_pipeline/ingest_batting.py, data_pipeline/ingest_pitching.py",
+      "detail": "Both scripts have identical player extraction, name splitting, and upsert logic (~20 lines duplicated). PLAYER_COLUMN_MAP is identical. The player upsert SQL is identical in both files.",
+      "recommendation": "Extract shared code into data_pipeline/common.py: upsert_players() function, shared PLAYER_COLUMN_MAP, DATABASE_URL setup, transform_players() helper."
+    },
+    {
+      "id": "TD-017",
+      "title": "No type annotations on data pipeline functions",
+      "category": "type-safety",
       "severity": "low",
       "effort": "S",
       "impact": "developer-experience",
-      "location": "project root",
-      "detail": ".env is in .gitignore but there is no .env.example template. New developers (or the same developer on a new machine) must guess which environment variables are needed.",
-      "recommendation": "Create .env.example with all required variables and placeholder values. Document which are required vs optional."
+      "location": "data_pipeline/ingest_batting.py, data_pipeline/ingest_pitching.py",
+      "detail": "load() and main() functions lack full type annotations. The coding style rules require type annotations on all function signatures.",
+      "recommendation": "Add type annotations: load(players: pd.DataFrame, stats: pd.DataFrame) -> None, main() -> None."
+    },
+    {
+      "id": "TD-018",
+      "title": "database.py has no connection pool configuration",
+      "category": "architecture",
+      "severity": "low",
+      "effort": "S",
+      "impact": "reliability",
+      "location": "backend/app/database.py",
+      "detail": "create_async_engine() uses defaults only. No pool_size, max_overflow, pool_timeout, pool_recycle, or pool_pre_ping. Should be explicitly configured for production.",
+      "recommendation": "Add pool_size=5, max_overflow=10, pool_timeout=30, pool_recycle=1800, pool_pre_ping=True."
     }
   ]
 }

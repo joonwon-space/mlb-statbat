@@ -1,34 +1,61 @@
 {
   "agent": "correctness-reviewer",
-  "summary": "The four applied fixes resolve the previously identified critical issues. The sqlparse-based _validate_select_only() correctly handles empty input, whitespace-only input, multi-statement semicolon injection, and non-SELECT single statements — all verified by 25 passing tests. The bulk executemany pattern in ingest_pitching.load() is correct and sound. Three issues remain: (1) sqlparse classifies 'SELECT INTO new_table FROM ...' as type='SELECT', so this destructive PostgreSQL DDL variant passes the guard silently — the test at line 113 acknowledges this as a known limitation without asserting it is blocked; (2) the dynamic f-string SQL construction in load() builds INSERT column names directly from DataFrame column names, which are developer-controlled constants today but not validated against a safe-character whitelist; (3) the ingest_pitching.transform() stats branch avoids an explicit .copy() on the normal code path where 'season' is already in columns, creating a SettingWithCopyWarning risk under pandas Copy-on-Write semantics.",
+  "summary": "The Sprint 2 changes are largely correct and well-structured. The SQL guard (_validate_select_only) is a sound defense-in-depth control. However, several correctness issues were found: the Anthropic client is re-instantiated on every request (a runtime inefficiency that can also mask connection issues), the ingest_batting.py transform() function does not handle missing columns gracefully for all COLUMN_MAP keys, and the _validate_select_only function has a subtle gap where sqlparse classifies a bare semicolon-terminated single SELECT (e.g., 'SELECT 1;') as one valid statement because the trailing empty statement is filtered out. Additionally, SET LOCAL statement_timeout only applies inside a transaction and execute_sql does not begin an explicit transaction, meaning on autocommit sessions the SET LOCAL may be silently ignored. The test suite is comprehensive but two async test classes are missing the @pytest.mark.asyncio marker (though pyproject.toml sets asyncio_mode='auto' so this is fine). Error propagation from generate_answer() failures is unhandled in main.py.",
   "verdict": "request-changes",
   "findings": [
     {
       "id": "COR-001",
-      "title": "SELECT INTO passes SQL guard — destructive DDL variant not blocked",
+      "title": "SET LOCAL statement_timeout ignored outside explicit transaction",
       "severity": "high",
       "category": "logic-error",
-      "location": "backend/app/text_to_sql.py:55-68",
-      "detail": "sqlparse.parse('SELECT * INTO new_table FROM players')[0].get_type() returns 'SELECT', so _validate_select_only() passes this statement without raising. SELECT INTO in PostgreSQL creates a new table populated with query results — it is a DDL/DML operation, not a pure read. The test at line 113-125 (test_select_into_blocked) explicitly acknowledges this limitation and wraps the assertion in try/except/pass, meaning the test passes whether the guard blocks or allows SELECT INTO. The comment 'asyncpg will block it at the driver level anyway' is incorrect: asyncpg does NOT filter CREATE TABLE AS or SELECT INTO by default. An adversarial LLM response could use SELECT INTO to exfiltrate data into attacker-accessible tables or pollute the schema.",
-      "fix": "After confirming stmt_type == 'SELECT', scan the flattened token stream for an INTO keyword in non-subquery position: `flat_types = [(t.ttype, t.normalized) for t in stmt.flatten()]; into_positions = [i for i, (tt, tv) in enumerate(flat_types) if tt is sqlparse.tokens.Keyword and tv == 'INTO']; if into_positions: raise ValueError('SELECT INTO is not permitted')`. Also update test_select_into_blocked to assert pytest.raises(ValueError) once the fix is in."
+      "location": "backend/app/text_to_sql.py:115",
+      "detail": "SET LOCAL only takes effect within an explicit transaction block. With SQLAlchemy async using autobegin (the default), there is no guarantee that the SET LOCAL and the subsequent SELECT share the same transaction scope, especially if the session is in autocommit mode. If the engine is configured with isolation_level='AUTOCOMMIT', SET LOCAL silently has no effect and runaway queries will not be killed. This defeats the purpose of the 5-second timeout guard.",
+      "fix": "Wrap both statements in an explicit transaction: `async with db.begin(): await db.execute(text('SET LOCAL statement_timeout = 5000')); result = await db.execute(text(sql))`. Alternatively, use `execution_options(timeout=5)` at the engine level."
     },
     {
       "id": "COR-002",
-      "title": "Dynamic SQL f-string column names in load() lack safe-character validation",
-      "severity": "medium",
-      "category": "data-integrity",
-      "location": "data_pipeline/ingest_pitching.py:107-121",
-      "detail": "col_names, placeholders, and update_clause are built from stat_cols = list(stats.columns), which derive from COLUMN_MAP values — developer-controlled constants today. However, these names are f-string interpolated directly into the INSERT SQL without any regex or whitelist check. If pybaseball ever returns a column whose name maps to a special character (dash, quote, SQL keyword), the interpolation would produce malformed or unsafe SQL. Values themselves are correctly parameterized via :col_name SQLAlchemy bind params, so data injection is not possible, but column-name injection is.",
-      "fix": "Add a whitelist check before building the SQL: `import re; invalid = [c for c in stat_cols if not re.match(r'^[a-z_][a-z0-9_]*$', c)]; if invalid: raise ValueError(f'Unsafe column names: {invalid}')`. This converts a silent risk into a loud, early failure."
+      "title": "generate_answer() failure not caught in main.py — unhandled 500",
+      "severity": "high",
+      "category": "error-handling",
+      "location": "backend/app/main.py:74",
+      "detail": "The call `answer = await generate_answer(req.question, sql, rows)` on line 74 has no try/except. If the Anthropic API call inside generate_answer() throws (e.g., anthropic.APIError, network timeout), FastAPI will surface an unhandled 500 without the friendly error message the team carefully composed for execute_sql failures. The user will see a raw traceback in logs and no useful response.",
+      "fix": "Add a try/except around the generate_answer call: `try: answer = await generate_answer(...) except Exception: logger.exception(...); answer = str(rows)` — degrade gracefully to raw rows rather than crashing the endpoint."
     },
     {
       "id": "COR-003",
-      "title": "Missing .copy() in transform() stats branch on normal code path",
+      "title": "Anthropic client re-instantiated on every request",
+      "severity": "medium",
+      "category": "logic-error",
+      "location": "backend/app/text_to_sql.py:62,167",
+      "detail": "Both generate_sql() and generate_answer() call `anthropic.AsyncAnthropic(api_key=...)` on every invocation. This creates a new HTTP client (with its own connection pool) on every request, which leaks connections under load and prevents connection reuse. At 10 req/min the impact is minor, but if rate limits are raised this becomes a resource leak.",
+      "fix": "Create a module-level client lazily: `_client: anthropic.AsyncAnthropic | None = None` and a getter `def _get_client() -> anthropic.AsyncAnthropic: global _client; if _client is None: _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key); return _client`. Use this in both functions."
+    },
+    {
+      "id": "COR-004",
+      "title": "ingest_batting.py: name split fails for single-word names",
+      "severity": "medium",
+      "category": "edge-case",
+      "location": "data_pipeline/ingest_batting.py:74",
+      "detail": "The transform() function splits player names with `str.split(' ', n=1, expand=True)` and takes `name_parts[1].fillna('')`. For players with a single-token name (e.g., 'Manny' returned by some pybaseball records, or non-standard Unicode names), `name_parts[1]` will be NaN and fillna('') produces an empty last name. While fillna handles the NaN, the name_first column will contain the full name and name_last will be empty, causing inconsistent data. This is a known MLB edge case (some international players have single-name entries).",
+      "fix": "Use `name_parts.get(1, pd.Series([''] * len(players))).fillna('')` and log a warning when name_last ends up empty: `if (players['name_last'] == '').any(): logger.warning('Found %d players with no last name', (players[\"name_last\"] == \"\").sum())`."
+    },
+    {
+      "id": "COR-005",
+      "title": "_validate_select_only passes 'SELECT 1;' (trailing semicolon)",
+      "severity": "medium",
+      "category": "logic-error",
+      "location": "backend/app/text_to_sql.py:87-95",
+      "detail": "sqlparse.parse('SELECT 1;') returns two tokens: a SELECT statement and an empty whitespace token. The filter `[s for s in parsed if s.get_type() is not None]` discards the empty token, leaving exactly 1 statement — the SELECT — which passes validation. The subsequent `db.execute(text('SELECT 1;'))` then executes fine. However, some PostgreSQL driver versions may interpret a trailing semicolon differently or allow the driver to batch commands. The risk is low but the guard should be tightened.",
+      "fix": "Strip trailing semicolons before parsing: `sql = sql.rstrip().rstrip(';').strip()` before passing to sqlparse. Add a test case for 'SELECT 1;' to verify the behavior is intentional."
+    },
+    {
+      "id": "COR-006",
+      "title": "conftest.py async_client fixture missing return type annotation",
       "severity": "low",
-      "category": "data-integrity",
-      "location": "data_pipeline/ingest_pitching.py:80-87",
-      "detail": "stats = df[list(available.keys())].rename(columns=available) may return a view or copy depending on pandas internals. The .copy() call is only reached when 'season' is not in stats.columns (i.e. when COLUMN_MAP lacks 'Season'). On the normal path the slice is used as-is, which can trigger pandas SettingWithCopyWarning and under pandas 3.x Copy-on-Write semantics will raise on attempted mutation.",
-      "fix": "Always copy after rename: `stats = df[list(available.keys())].rename(columns=available).copy()` and remove the conditional copy inside the if block."
+      "category": "contract-violation",
+      "location": "backend/tests/conftest.py:12",
+      "detail": "The async_client fixture is declared as `async def async_client() -> AsyncClient` but it is a generator (uses yield), so the correct return type is `AsyncGenerator[AsyncClient, None]`. This is a type contract violation that mypy would flag and could confuse future developers about the fixture's lifecycle.",
+      "fix": "Change to `async def async_client() -> AsyncGenerator[AsyncClient, None]` and add `from collections.abc import AsyncGenerator` to imports."
     }
   ]
 }

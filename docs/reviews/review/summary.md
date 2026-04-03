@@ -1,25 +1,8 @@
-# Code Review Summary
-
-**Branch**: `auto-task/20260403-1120`
-**Date**: 2026-04-03
-**Re-review after 4 fixes**: sqlparse SQL guard, 25 tests, logging migration, bulk executemany
+# Code Review Summary - Sprint 2 (branch: auto-task/20260403-1301)
 
 ## Verdict: REQUEST CHANGES
 
-Three reviewers (correctness, security, maintainability) recommend request-changes due to one HIGH finding that persists after the fixes: the sqlparse SQL guard passes `SELECT INTO new_table FROM ...` as a valid SELECT, allowing a destructive DDL variant through. The performance reviewer approves. Two medium findings also carry over unaddressed from the prior cycle.
-
----
-
-## Fix Verification
-
-The 4 applied fixes are confirmed working:
-
-| Fix | Status | Notes |
-|-----|--------|-------|
-| SQL guard now uses sqlparse | RESOLVED for semicolon injection | HIGH gap remains: SELECT INTO passes as type='SELECT' |
-| 25 tests for _validate_select_only() | CONFIRMED passing | test_select_into_blocked is a no-op assertion (try/except/pass) |
-| ingest_pitching.py print() replaced with logging | FULLY RESOLVED | Matches ingest_batting.py convention |
-| N+1 INSERT replaced with bulk executemany | FULLY RESOLVED | Both player and stats upserts now use executemany |
+Sprint 2 delivered substantial, well-intentioned work: a comprehensive test suite (74 tests across 4 files), Alembic migration framework wired to async SQLAlchemy, rate limiting, SQL execution timeout, batch upsert in the data pipeline, and both LLM integrations fully wired to Anthropic Claude. The security posture is meaningfully improved over the prior state. However, five HIGH-severity findings require fixes before this branch merges to main.
 
 ---
 
@@ -27,7 +10,11 @@ The 4 applied fixes are confirmed working:
 
 | # | ID | Title | Severity | Reviewers | Location | Fix |
 |---|-----|-------|----------|-----------|----------|-----|
-| 1 | COR-001 / SEC-001 | SELECT INTO passes SQL guard — destructive DDL variant allowed | HIGH | correctness, security | `backend/app/text_to_sql.py:55-68` | After confirming `stmt_type == 'SELECT'`, scan flattened tokens for `INTO` keyword outside subquery: `if any(t.ttype is sqlparse.tokens.Keyword and t.normalized == 'INTO' for t in stmt.flatten()): raise ValueError('SELECT INTO is not permitted')`. Update `test_select_into_blocked` to `pytest.raises(ValueError)`. |
+| 1 | COR-001 | SET LOCAL statement_timeout not guaranteed inside transaction | HIGH | Correctness + Security | backend/app/text_to_sql.py:115 | Wrap both SET LOCAL and the SELECT in async with db.begin() to ensure they share a transaction. Without this the 5-second guard is unreliable. |
+| 2 | SEC-001 | SQL guard does not block pg_sleep() or CROSS JOIN DoS via valid SELECT | HIGH | Security | backend/app/text_to_sql.py:80-101 | Add a denylist of dangerous PostgreSQL functions (pg_sleep, lo_export, dblink) in _validate_select_only. Enforce LIMIT 1000 if no LIMIT token is present. |
+| 3 | PERF-001 | execute_sql fetches entire result set into memory with no row cap | HIGH | Performance | backend/app/text_to_sql.py:120-121 | Replace fetchall() with fetchmany(1000) or enforce LIMIT at SQL level. |
+| 4 | SEC-002 | Hardcoded default DATABASE_URL with password changeme in config.py | HIGH | Security | backend/app/config.py:5 | Remove the default value: database_url: str (no default). Add startup guard detecting changeme. |
+| 5 | COR-002 | generate_answer() failure not caught in main.py | HIGH | Correctness | backend/app/main.py:74 | Wrap the generate_answer call in try/except; degrade gracefully to str(rows) on failure. |
 
 ---
 
@@ -35,12 +22,12 @@ The 4 applied fixes are confirmed working:
 
 | # | ID | Title | Severity | Reviewer | Location | Fix |
 |---|-----|-------|----------|----------|----------|-----|
-| 2 | COR-002 / SEC-002 | Dynamic SQL column names not whitelist-validated in ingest_pitching.load() | MEDIUM | correctness, security | `data_pipeline/ingest_pitching.py:107-121` | Add: `import re; invalid = [c for c in stat_cols if not re.match(r'^[a-z_][a-z0-9_]*$', c)]; if invalid: raise ValueError(f'Unsafe column names: {invalid}')` before building the f-string SQL. |
-| 3 | PERF-001 | Unbounded fetchall() — no row cap on execute_sql() results | MEDIUM | performance | `backend/app/text_to_sql.py:76-78` | Replace `result.fetchall()` with `result.fetchmany(1000)`. Add `LIMIT 100` guidance to `SYSTEM_PROMPT`. |
-| 4 | MAIN-001 | test_select_into_blocked is a no-op assertion — guard regression not caught | MEDIUM | maintainability | `backend/tests/test_text_to_sql.py:113-125` | Document current behavior explicitly OR fix the guard (COR-001) and change to `pytest.raises(ValueError)`. Either way, remove the try/except/pass that masks the assertion. |
-| 5 | MAIN-002 | cors_origins_list @property non-idiomatic for pydantic-settings v2 | MEDIUM | maintainability | `backend/app/config.py:10` | Use `@computed_field` from pydantic v2: `from pydantic import computed_field; @computed_field; @property; def cors_origins_list(self) -> list[str]: ...` |
-| 6 | MAIN-003 | generate_answer() stub returns raw Python repr visible to end users | MEDIUM | maintainability | `backend/app/text_to_sql.py:81-86` | Return: `f'Found {len(rows)} result(s). (Natural language answers will be available once LLM integration is configured.)'` |
-| 7 | SEC-003 | No rate limiting on /api/query endpoint | MEDIUM | security | `backend/app/main.py:47` | Add `slowapi` rate limiting: `@limiter.limit('10/minute')` on the query endpoint. Required by project security checklist. |
+| 6 | SEC-003 | Rate limiter vulnerable to IP spoofing via X-Forwarded-For | MEDIUM | Security | backend/app/main.py:19 | Configure trusted proxy validation before honoring X-Forwarded-For. |
+| 7 | SEC-004 + MAIN-003 | ingest_batting.py builds SQL from DataFrame columns without whitelist check | MEDIUM | Security + Maintainability | data_pipeline/ingest_batting.py:112-128 | Add allowed = set(COLUMN_MAP.values()); assert set(stat_cols).issubset(allowed) before building INSERT SQL. |
+| 8 | MAIN-001 | text_to_sql.py mixes four concerns in one file - violates SRP | HIGH | Maintainability | backend/app/text_to_sql.py:1-178 | Extract app/sql_validator.py and app/llm_client.py. Keep text_to_sql.py as thin orchestration. |
+| 9 | MAIN-005 + PERF-004 | Alembic migration missing FK constraints on batting_stats and pitching_stats | MEDIUM | Maintainability + Performance | backend/alembic/versions/0001_initial_schema.py:62-103 | Add sa.ForeignKeyConstraint to both tables before data is loaded. |
+| 10 | COR-003 + PERF-003 | Anthropic client re-instantiated on every request | MEDIUM | Correctness + Performance | backend/app/text_to_sql.py:62,167 | Create a module-level singleton initialized lazily on first use. |
+| 11 | MAIN-004 | config.py default credentials make misconfiguration silent | MEDIUM | Maintainability | backend/app/config.py:5-6 | Add model_validator that logs WARNING when anthropic_api_key is empty at startup. |
 
 ---
 
@@ -48,22 +35,14 @@ The 4 applied fixes are confirmed working:
 
 | # | ID | Title | Severity | Reviewer | Location | Fix |
 |---|-----|-------|----------|----------|----------|-----|
-| 8 | COR-003 | Missing .copy() in transform() stats branch on normal code path | LOW | correctness | `data_pipeline/ingest_pitching.py:80-87` | Always copy after rename: `stats = df[list(available.keys())].rename(columns=available).copy()` |
-| 9 | MAIN-004 | load() handles two responsibilities without helper extraction | LOW | maintainability | `data_pipeline/ingest_pitching.py:93-125` | Extract `_upsert_players(conn, records)` and `_upsert_stats(conn, records, stat_cols)` helpers. |
-| 10 | PERF-002 | sqlparse.parse() runs synchronously in async hot path | LOW | performance | `backend/app/text_to_sql.py:55-68` | Wrap in `run_in_executor` to avoid blocking event loop. Defer until profiling confirms impact. |
-| 11 | PERF-003 | Loading skeleton flickers on fast responses — no minimum display threshold | LOW | performance | `frontend/src/app/page.tsx:101` | Delay skeleton 300ms via `useEffect` + `setTimeout` before setting `showSkeleton = true`. |
-| 12 | SEC-004 | Full SQL query text logged on exception — may expose user data in log aggregation | LOW | security | `backend/app/text_to_sql.py:72-75` | Log truncated preview: `logger.exception('SQL execution failed (query_len=%d, preview=%s)', len(sql), sql[:100])` |
-
----
-
-## Positive Findings (confirmed by re-review)
-
-- **Semicolon injection blocked**: `_validate_select_only()` correctly uses sqlparse to enforce exactly one statement — the prior regex approach is fully replaced.
-- **25 tests for SQL guard**: Comprehensive coverage of DML/DDL blocking, multi-statement injection, empty input, whitespace, CTE/WITH, subqueries, case-insensitivity. Good test structure.
-- **logging in ingest_pitching.py**: Uses `logging.basicConfig` + `logger = logging.getLogger(__name__)` — fully consistent with `ingest_batting.py`.
-- **Bulk executemany**: Both player upsert and pitching stats upsert now use a single `conn.execute(text(...), list_of_dicts)` call — N+1 pattern fully eliminated.
-- **Error handling in execute_sql()**: The try/except wraps only the DB call, logs with `logger.exception`, and re-raises — correct pattern.
-- **main.py error routing**: `ValueError` from the SQL guard is surfaced as 400 with the guard message (safe); generic `Exception` returns a sanitized 500 message — well-structured.
+| 12 | SEC-005 | No content filtering for LLM prompt injection attempts | MEDIUM | Security | backend/app/text_to_sql.py:51-77 | Strip control characters; log requests containing injection phrases. |
+| 13 | COR-004 | Name split produces empty name_last for single-word player names | MEDIUM | Correctness | data_pipeline/ingest_batting.py:74 | Use name_parts.get(1).fillna('') and log a warning when name_last is empty. |
+| 14 | COR-005 | _validate_select_only passes SELECT 1; with trailing semicolon | MEDIUM | Correctness | backend/app/text_to_sql.py:87-95 | Strip trailing semicolons before sqlparse. |
+| 15 | PERF-002 | No caching for identical LLM questions - two API calls per identical request | MEDIUM | Performance | backend/app/text_to_sql.py:51-77 | Add TTLCache(maxsize=500, ttl=3600) for generate_sql() keyed on normalized question. |
+| 16 | MAIN-002 | SYSTEM_PROMPT eagerly evaluated as f-string at import | MEDIUM | Maintainability | backend/app/text_to_sql.py:29-34 | Convert to def _build_system_prompt(schema: str = DB_SCHEMA) -> str. |
+| 17 | COR-006 | conftest.py async fixture has incorrect return type annotation | LOW | Correctness | backend/tests/conftest.py:12 | Change -> AsyncClient to -> AsyncGenerator[AsyncClient, None]. |
+| 18 | MAIN-006 | Private helpers directly imported in tests | LOW | Maintainability | backend/tests/test_text_to_sql.py:5-10 | Add __all__ to text_to_sql.py or document the intentional direct testing. |
+| 19 | MAIN-007 | mock_db fixture in conftest.py is unused dead code | LOW | Maintainability | backend/tests/conftest.py:32-39 | Remove or update to support the two-call side_effect pattern. |
 
 ---
 
@@ -71,16 +50,31 @@ The 4 applied fixes are confirmed working:
 
 | Reviewer | Verdict | Findings |
 |----------|---------|----------|
-| correctness | request-changes | 3 findings |
-| security | request-changes | 4 findings |
-| performance | request-changes | 3 findings |
-| maintainability | request-changes | 4 findings |
-| **Total unique** | **REQUEST CHANGES** | **12 findings (after dedup)** |
+| Correctness | request-changes | 6 findings (2 HIGH, 3 MEDIUM, 1 LOW) |
+| Security | request-changes | 5 findings (2 HIGH, 3 MEDIUM) |
+| Performance | request-changes | 5 findings (1 HIGH, 2 MEDIUM, 2 LOW) |
+| Maintainability | request-changes | 7 findings (1 HIGH, 4 MEDIUM, 2 LOW) |
+| Total unique findings | | 19 (after deduplication of 4 overlapping pairs) |
 
-Deduplication applied:
-- COR-001 + SEC-001 merged (SELECT INTO passes SQL guard — same root cause)
-- COR-002 + SEC-002 merged (dynamic column names not whitelisted)
+Must Fix: 5 items (blocks merge)
+Should Fix: 6 items
+Consider: 8 items
 
-**Must Fix**: 1 item (blocks merge)
-**Should Fix**: 6 items
-**Consider**: 5 items
+---
+
+## Key Strengths
+
+- Comprehensive test suite (74 tests, good edge case and boundary value coverage)
+- _validate_select_only guard with sqlparse blocks multi-statement injection, DML, DDL, SELECT INTO
+- Alembic async env.py correctly implemented; replaces create_all() appropriately
+- Batch upsert in ingest_batting.py is a clean improvement over row-by-row iteration
+- Rate limiting in place with appropriate 429 handler registration
+- Error messages are safe - no raw exception details leaked to clients for DB errors
+
+## Critical Risk Summary
+
+The most urgent risks:
+
+1. Timeout guard unreliable (COR-001 + SEC-001): The 5-second SET LOCAL statement_timeout may not apply without an explicit transaction. Even when it does, pg_sleep() and large CROSS JOIN queries bypass the intent. Fixing COR-001 (explicit transaction) plus adding LIMIT enforcement plus the pg_sleep denylist addresses both risks in one pass.
+
+2. Unbounded fetchall() (PERF-001): Even with a timeout, a query returning 50k rows loads everything into Python memory before any cap is applied.

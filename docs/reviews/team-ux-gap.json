@@ -1,116 +1,95 @@
 {
   "agent": "ux-gap-analyst",
-  "summary": "The app has a clean minimal chat UI with basic error handling and loading state, but critical UX gaps exist: no query history (users lose previous Q&A), no example questions for first-time users, raw Python dict display as 'answer', no accessibility labels on interactive elements, and the results table lacks number formatting for baseball stats. The core query experience is a single-shot interaction with no context retention.",
+  "date": "2026-04-03-sprint2",
+  "summary": "Sprint 1 added example question chips and loading skeleton -- the two most impactful UX gaps. The remaining UX issues center around: (1) the core query flow is still non-functional (LLM stubbed), so users always see a 501 error, (2) no query history persistence, (3) raw database column names in results table, (4) no number formatting for baseball stats, (5) page.tsx at 189 lines is a single monolithic client component. The 501 error message is developer-facing and confusing to end users.",
   "findings": [
     {
-      "id": "UX-001",
-      "title": "No query history — users lose all previous questions and answers on page reload",
+      "id": "UX-011",
+      "title": "501 error message 'LLM integration not yet configured' confuses users",
+      "category": "error-handling",
+      "severity": "high",
+      "effort": "S",
+      "impact": "user-experience",
+      "location": "backend/app/main.py:46",
+      "detail": "When a user submits a question, they see 'LLM integration not yet configured' -- a developer message. Until LLM is wired, this should be user-friendly.",
+      "recommendation": "Change the 501 detail to: 'The AI assistant is being set up. Please check back soon.'"
+    },
+    {
+      "id": "UX-012",
+      "title": "No query history -- users lose previous questions on page refresh",
       "category": "chat-experience",
       "severity": "high",
       "effort": "M",
       "impact": "user-experience",
       "location": "frontend/src/app/page.tsx",
-      "detail": "Each query replaces the previous result entirely. Users cannot see their question history, compare answers, or reference earlier queries. Refreshing the page loses everything. For a stats exploration tool, context continuity is essential.",
-      "recommendation": "Add a questions[] state array that accumulates {question, response, error} entries. Render as a scrollable chat-style list. Persist to localStorage for cross-session retention. Use a custom useQueryHistory() hook."
+      "detail": "Each query replaces the previous result. Users cannot see or revisit past questions. No localStorage persistence. Already in todo.md P3 but should be promoted to P1.",
+      "recommendation": "Add a history array to state, push each {question, response, timestamp}. Persist to localStorage. Display as scrollable list."
     },
     {
-      "id": "UX-002",
-      "title": "No example questions for new users — blank page with no guidance",
-      "category": "chat-experience",
-      "severity": "high",
-      "effort": "S",
-      "impact": "user-experience",
-      "location": "frontend/src/app/page.tsx",
-      "detail": "A first-time user sees only an input box with a placeholder. They don't know what kinds of questions work, what data is available, or what format to use. This increases friction and reduces engagement.",
-      "recommendation": "Add 3-4 clickable example question chips below the input: 'Who leads the AL in home runs?', '2025 season OPS leaders', 'Shohei Ohtani career batting average'. On click, populate the input and auto-submit."
-    },
-    {
-      "id": "UX-003",
-      "title": "Loading indicator is just '...' on the button — no visual feedback for long LLM calls",
-      "category": "loading-state",
-      "severity": "high",
-      "effort": "S",
-      "impact": "user-experience",
-      "location": "frontend/src/app/page.tsx:59",
-      "detail": "LLM + SQL execution can take 2-5 seconds. The only indicator is the button text changing from 'Ask' to '...'. There is no spinner, no skeleton loader, no progress message. Users may think the app is broken.",
-      "recommendation": "Add a visible loading skeleton or spinner in the results area when loading=true. Show a message like 'Analyzing your question...' then 'Running query...' for staged feedback. Use Tailwind animate-pulse on a skeleton card."
-    },
-    {
-      "id": "UX-004",
-      "title": "Results table column headers show raw DB column names",
-      "category": "data-presentation",
-      "severity": "medium",
-      "effort": "S",
-      "impact": "user-experience",
-      "location": "frontend/src/app/page.tsx:110-117",
-      "detail": "Table headers display raw database column names like 'player_mlb_id', 'batting_avg', 'wrc_plus'. These are developer-facing identifiers, not human-readable labels. Baseball fans expect 'AVG', 'OPS', 'wRC+'.",
-      "recommendation": "Create a columnDisplayNames map: { batting_avg: 'AVG', home_runs: 'HR', plate_appearances: 'PA', wrc_plus: 'wRC+' }. Apply to table headers. For unmapped columns, convert snake_case to Title Case."
-    },
-    {
-      "id": "UX-005",
-      "title": "No number formatting for baseball statistics",
-      "category": "data-presentation",
-      "severity": "medium",
-      "effort": "S",
-      "impact": "user-experience",
-      "location": "frontend/src/app/page.tsx:123-130",
-      "detail": "All values are rendered with String(val). Baseball averages should show 3 decimal places (.300, not 0.3), ERA should show 2 decimals, WAR 1 decimal, counting stats should have commas for thousands. Currently, values display as raw floats.",
-      "recommendation": "Create a formatStatValue(columnName, value) utility. Detect stat type from column name and format accordingly: batting_avg/obp/slg → .toFixed(3), era/whip → .toFixed(2), war → .toFixed(1), counting stats → toLocaleString()."
-    },
-    {
-      "id": "UX-006",
-      "title": "Textarea component missing aria-label for screen readers",
-      "category": "a11y",
-      "severity": "medium",
-      "effort": "S",
-      "impact": "accessibility",
-      "location": "frontend/src/app/page.tsx:46-58",
-      "detail": "The query Textarea has no associated <label> element or aria-label attribute. Screen readers will announce it generically as 'text area' without context about its purpose.",
-      "recommendation": "Add aria-label='Ask a baseball statistics question' to the Textarea. Or wrap with a visually-hidden <label> element using sr-only class."
-    },
-    {
-      "id": "UX-007",
-      "title": "Results table missing scope and caption for accessibility",
-      "category": "a11y",
-      "severity": "medium",
-      "effort": "S",
-      "impact": "accessibility",
-      "location": "frontend/src/app/page.tsx:107-137",
-      "detail": "The results table has no <caption>, no scope='col' on <th> elements. Screen readers cannot properly associate data cells with their column headers.",
-      "recommendation": "Add <caption className='sr-only'>Query results</caption>, add scope='col' to all <th> elements, add scope='row' to first <td> in each row if it's an identifier column."
-    },
-    {
-      "id": "UX-008",
-      "title": "No empty state when query returns zero results",
+      "id": "UX-013",
+      "title": "No explicit empty state for zero query results",
       "category": "empty-state",
       "severity": "medium",
       "effort": "S",
       "impact": "user-experience",
-      "location": "frontend/src/app/page.tsx:73-139",
-      "detail": "When a query returns zero results, the Answer card shows 'No results found for your question.' but the Results card simply doesn't render (result.length > 0 check). This is ok but could be more helpful — suggest reformulating the question or show what data is available.",
-      "recommendation": "When result is empty, show a helpful empty state: 'No matching data found. Try asking about batting stats for a specific player or season. We currently have batting stats for qualified hitters.'"
+      "location": "frontend/src/app/page.tsx:143",
+      "detail": "When a query returns zero results, the Results card is simply not rendered. Users may think it's broken.",
+      "recommendation": "Show an explicit empty state card: 'No matching records found. Try broadening your search.'"
     },
     {
-      "id": "UX-009",
-      "title": "No responsive table behavior for mobile",
-      "category": "responsive",
+      "id": "UX-014",
+      "title": "Textarea lacks aria-label for screen readers",
+      "category": "a11y",
       "severity": "medium",
       "effort": "S",
-      "impact": "mobile-usability",
-      "location": "frontend/src/app/page.tsx:106",
-      "detail": "The results table has overflow-x-auto which enables horizontal scrolling, but there's no visual indicator that the table scrolls horizontally on mobile. Baseball stat tables can have 10+ columns making them very wide.",
-      "recommendation": "Add a subtle gradient fade on the right edge when table overflows. Or add a 'scroll for more' hint below the table. Consider a card-based layout on mobile breakpoints (sm:) instead of a table."
+      "impact": "accessibility",
+      "location": "frontend/src/app/page.tsx:64",
+      "detail": "The Textarea has no aria-label or associated <label>. Screen readers announce it generically. Flagged in Sprint 1 (UX-006), in todo.md, still not fixed.",
+      "recommendation": "Add aria-label='Ask a baseball statistics question' to the Textarea."
     },
     {
-      "id": "UX-010",
-      "title": "Error messages may expose internal details to users",
-      "category": "error-handling",
+      "id": "UX-015",
+      "title": "Results table missing accessibility attributes",
+      "category": "a11y",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "accessibility",
+      "location": "frontend/src/app/page.tsx:152",
+      "detail": "Table has no <caption>, <th> lacks scope='col'. Already in todo.md (UX-007) but not fixed.",
+      "recommendation": "Add caption, scope='col' to <th>, aria-label to table wrapper."
+    },
+    {
+      "id": "UX-016",
+      "title": "Results table shows raw DB column names",
+      "category": "data-presentation",
       "severity": "medium",
       "effort": "S",
       "impact": "user-experience",
-      "location": "backend/app/main.py:47, frontend/src/app/page.tsx:27",
-      "detail": "The backend returns 'SQL execution error: {e}' which may contain PostgreSQL error messages with table names, column names, or query details. These are passed directly to the frontend error display. Users see developer-facing error messages.",
-      "recommendation": "Backend: log the full error server-side, return a generic user-friendly message like 'We couldn't run that query. Try rephrasing your question.' Frontend: map known error codes to user-friendly messages."
+      "location": "frontend/src/app/page.tsx:155-160",
+      "detail": "Column headers show 'player_mlb_id', 'batting_avg', 'wrc_plus'. Already tracked (UX-004) but should be promoted -- low-effort, high-visibility.",
+      "recommendation": "Create columnDisplayMap and apply in header render."
+    },
+    {
+      "id": "UX-017",
+      "title": "No copy-to-clipboard for SQL or results",
+      "category": "chat-experience",
+      "severity": "low",
+      "effort": "S",
+      "impact": "user-experience",
+      "location": "frontend/src/app/page.tsx:137-139",
+      "detail": "Users cannot copy the generated SQL. A copy button would help power users.",
+      "recommendation": "Add copy button using navigator.clipboard.writeText()."
+    },
+    {
+      "id": "UX-018",
+      "title": "No dark/light mode toggle",
+      "category": "chat-experience",
+      "severity": "low",
+      "effort": "S",
+      "impact": "user-experience",
+      "location": "frontend/src/app/layout.tsx",
+      "detail": "Uses dark: Tailwind variants but no toggle. Only follows system preference.",
+      "recommendation": "Add theme toggle button using next-themes."
     }
   ]
 }
