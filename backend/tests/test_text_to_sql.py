@@ -277,7 +277,7 @@ class TestGenerateAnswer:
                 mock_client.messages.create = AsyncMock(return_value=mock_message)
                 mock_client_cls.return_value = mock_client
 
-                answer = await generate_answer("List players", "SELECT ...", rows)
+                await generate_answer("List players", "SELECT ...", rows)
 
         # Verify the user message content included "5 more rows" truncation note
         call_kwargs = mock_client.messages.create.call_args.kwargs
