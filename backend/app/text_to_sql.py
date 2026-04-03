@@ -78,9 +78,14 @@ async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:
     """Execute generated SQL and return rows as list of dicts.
 
     Only SELECT queries are allowed. Raises ValueError for any other statement.
+    A 5-second statement timeout is enforced at the session level so that
+    runaway LLM-generated queries cannot hold a connection indefinitely.
     """
     _validate_select_only(sql)
     try:
+        # Apply a per-statement timeout (5 000 ms) before running the query.
+        # SET LOCAL is scoped to the current transaction block only.
+        await db.execute(text("SET LOCAL statement_timeout = 5000"))
         result = await db.execute(text(sql))
     except Exception:
         logger.exception("SQL execution failed for query: %s", sql)

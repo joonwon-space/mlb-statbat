@@ -129,12 +129,19 @@ class TestExecuteSql:
     def _make_mock_session(
         self, columns: list[str], rows: list[tuple]
     ) -> AsyncMock:
-        """Build a mock AsyncSession that returns given columns and rows."""
+        """Build a mock AsyncSession that returns given columns and rows.
+
+        execute_sql makes two execute() calls:
+          1. SET LOCAL statement_timeout = 5000  (returns a dummy result)
+          2. The actual SELECT query              (returns the data result)
+        """
         session = AsyncMock()
-        result = MagicMock()
-        result.keys.return_value = columns
-        result.fetchall.return_value = rows
-        session.execute.return_value = result
+        timeout_result = MagicMock()
+        data_result = MagicMock()
+        data_result.keys.return_value = columns
+        data_result.fetchall.return_value = rows
+        # First call -> timeout SET, second call -> data
+        session.execute.side_effect = [timeout_result, data_result]
         return session
 
     async def test_returns_list_of_dicts(self) -> None:
@@ -166,10 +173,22 @@ class TestExecuteSql:
         session.execute.assert_not_called()
 
     async def test_reraises_db_exception(self) -> None:
+        """DB error on the actual SELECT should propagate after SET LOCAL."""
         session = AsyncMock()
-        session.execute.side_effect = RuntimeError("DB connection lost")
+        timeout_result = MagicMock()
+        # First call (SET LOCAL) succeeds; second call raises
+        session.execute.side_effect = [timeout_result, RuntimeError("DB connection lost")]
         with pytest.raises(RuntimeError, match="DB connection lost"):
             await execute_sql(session, "SELECT * FROM players")
+
+    async def test_statement_timeout_is_set(self) -> None:
+        """execute_sql must issue SET LOCAL statement_timeout before the query."""
+        session = self._make_mock_session(columns=["id"], rows=[(1,)])
+        await execute_sql(session, "SELECT id FROM players")
+        # First call must be the SET LOCAL statement
+        first_call_arg = session.execute.call_args_list[0].args[0]
+        assert "statement_timeout" in str(first_call_arg)
+        assert "5000" in str(first_call_arg)
 
     async def test_single_column_single_row(self) -> None:
         session = self._make_mock_session(columns=["count"], rows=[(42,)])
