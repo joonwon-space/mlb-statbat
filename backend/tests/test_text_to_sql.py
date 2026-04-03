@@ -1,6 +1,7 @@
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
-from app.text_to_sql import _validate_select_only
+from app.text_to_sql import _validate_select_only, execute_sql, generate_answer
 
 
 class TestValidateSelectOnly:
@@ -120,3 +121,78 @@ class TestValidateSelectOnly:
         """EXPLAIN should not be allowed — only pure SELECT."""
         with pytest.raises(ValueError):
             _validate_select_only("EXPLAIN SELECT * FROM players")
+
+
+class TestExecuteSql:
+    """Tests for execute_sql() using a mocked AsyncSession."""
+
+    def _make_mock_session(
+        self, columns: list[str], rows: list[tuple]
+    ) -> AsyncMock:
+        """Build a mock AsyncSession that returns given columns and rows."""
+        session = AsyncMock()
+        result = MagicMock()
+        result.keys.return_value = columns
+        result.fetchall.return_value = rows
+        session.execute.return_value = result
+        return session
+
+    async def test_returns_list_of_dicts(self) -> None:
+        session = self._make_mock_session(
+            columns=["name", "home_runs"],
+            rows=[("Aaron Judge", 62), ("Kyle Schwarber", 46)],
+        )
+        rows = await execute_sql(session, "SELECT name, home_runs FROM batting_stats")
+        assert rows == [
+            {"name": "Aaron Judge", "home_runs": 62},
+            {"name": "Kyle Schwarber", "home_runs": 46},
+        ]
+
+    async def test_returns_empty_list_when_no_rows(self) -> None:
+        session = self._make_mock_session(columns=["name"], rows=[])
+        rows = await execute_sql(session, "SELECT name FROM players WHERE id = -1")
+        assert rows == []
+
+    async def test_raises_value_error_for_non_select(self) -> None:
+        session = AsyncMock()
+        with pytest.raises(ValueError, match="SELECT"):
+            await execute_sql(session, "DELETE FROM players")
+        session.execute.assert_not_called()
+
+    async def test_raises_value_error_for_multi_statement(self) -> None:
+        session = AsyncMock()
+        with pytest.raises(ValueError, match="one SQL statement"):
+            await execute_sql(session, "SELECT 1; DROP TABLE players")
+        session.execute.assert_not_called()
+
+    async def test_reraises_db_exception(self) -> None:
+        session = AsyncMock()
+        session.execute.side_effect = RuntimeError("DB connection lost")
+        with pytest.raises(RuntimeError, match="DB connection lost"):
+            await execute_sql(session, "SELECT * FROM players")
+
+    async def test_single_column_single_row(self) -> None:
+        session = self._make_mock_session(columns=["count"], rows=[(42,)])
+        rows = await execute_sql(session, "SELECT COUNT(*) AS count FROM players")
+        assert rows == [{"count": 42}]
+
+
+class TestGenerateAnswer:
+    """Tests for generate_answer() stub behaviour."""
+
+    async def test_returns_no_results_message_for_empty_rows(self) -> None:
+        answer = await generate_answer("Who led in home runs?", "SELECT ...", [])
+        assert "No results" in answer
+
+    async def test_returns_string_for_non_empty_rows(self) -> None:
+        rows = [{"name": "Aaron Judge", "home_runs": 62}]
+        answer = await generate_answer("Home run leader?", "SELECT ...", rows)
+        assert isinstance(answer, str)
+        assert len(answer) > 0
+
+    async def test_returns_string_representation_of_rows(self) -> None:
+        """Stub returns str(rows); verify it contains row data."""
+        rows = [{"era": 1.92}]
+        answer = await generate_answer("Best ERA?", "SELECT ...", rows)
+        # The stub converts rows to str — the value should appear somewhere
+        assert "1.92" in answer
