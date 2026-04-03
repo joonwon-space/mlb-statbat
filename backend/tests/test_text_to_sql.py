@@ -1,7 +1,13 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.text_to_sql import _validate_select_only, execute_sql, generate_answer
+from app.text_to_sql import (
+    _strip_sql_fence,
+    _validate_select_only,
+    execute_sql,
+    generate_answer,
+    generate_sql,
+)
 
 
 class TestValidateSelectOnly:
@@ -215,3 +221,76 @@ class TestGenerateAnswer:
         answer = await generate_answer("Best ERA?", "SELECT ...", rows)
         # The stub converts rows to str — the value should appear somewhere
         assert "1.92" in answer
+
+
+class TestStripSqlFence:
+    """Tests for the markdown fence stripping helper."""
+
+    def test_strips_sql_fence(self) -> None:
+        assert _strip_sql_fence("```sql\nSELECT 1\n```") == "SELECT 1"
+
+    def test_strips_plain_fence(self) -> None:
+        assert _strip_sql_fence("```\nSELECT 1\n```") == "SELECT 1"
+
+    def test_no_fence_unchanged(self) -> None:
+        assert _strip_sql_fence("SELECT * FROM players") == "SELECT * FROM players"
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        assert _strip_sql_fence("  SELECT 1  ") == "SELECT 1"
+
+
+class TestGenerateSql:
+    """Tests for generate_sql() Anthropic wiring."""
+
+    async def test_raises_not_implemented_when_api_key_missing(self) -> None:
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = ""
+            with pytest.raises(NotImplementedError, match="not yet configured"):
+                await generate_sql("Who hit the most home runs?")
+
+    async def test_returns_sql_from_llm_response(self) -> None:
+        fake_sql = "SELECT * FROM batting_stats ORDER BY home_runs DESC LIMIT 1"
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text=fake_sql)]
+
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
+            with patch("app.text_to_sql.anthropic.AsyncAnthropic") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_message)
+                mock_client_cls.return_value = mock_client
+
+                result = await generate_sql("Who hit the most home runs?")
+
+        assert result == fake_sql
+
+    async def test_strips_markdown_fence_from_response(self) -> None:
+        wrapped_sql = "```sql\nSELECT * FROM players\n```"
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text=wrapped_sql)]
+
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
+            with patch("app.text_to_sql.anthropic.AsyncAnthropic") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_message)
+                mock_client_cls.return_value = mock_client
+
+                result = await generate_sql("List all players")
+
+        assert result == "SELECT * FROM players"
+
+    async def test_raises_value_error_on_empty_llm_response(self) -> None:
+        mock_message = MagicMock()
+        mock_message.content = []
+
+        with patch("app.text_to_sql.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
+            with patch("app.text_to_sql.anthropic.AsyncAnthropic") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_message)
+                mock_client_cls.return_value = mock_client
+
+                with pytest.raises(ValueError, match="empty SQL response"):
+                    await generate_sql("empty question?")

@@ -1,8 +1,12 @@
 import logging
+import re
 
+import anthropic
 import sqlparse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,30 +28,53 @@ Relationships:
 
 SYSTEM_PROMPT = f"""You are a SQL assistant for an MLB statistics database (PostgreSQL).
 Given a natural language question about baseball stats, generate a single SELECT query.
-Return ONLY the SQL query, no explanation.
+Return ONLY the SQL query, no explanation, no markdown fences.
 
 {DB_SCHEMA}
 """
 
+# Model used for SQL generation (cheapest capable Anthropic model).
+_SQL_MODEL = "claude-haiku-4-5"
+
+# Regex to strip optional ```sql ... ``` markdown fences from LLM output.
+_SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_sql_fence(raw: str) -> str:
+    """Remove markdown code fences if the model wraps its response in them."""
+    match = _SQL_FENCE_RE.search(raw)
+    if match:
+        return match.group(1).strip()
+    return raw.strip()
+
 
 async def generate_sql(question: str) -> str:
-    """Call LLM to convert natural language question to SQL.
+    """Call Anthropic Claude to convert a natural language question to SQL.
 
-    Currently a stub — will be wired to OpenAI or Anthropic API.
+    Raises:
+        NotImplementedError: When ANTHROPIC_API_KEY is not configured.
+        anthropic.APIError: On API communication failures.
+        ValueError: If the model returns an empty response.
     """
-    # TODO: implement LLM call
-    # Example using Anthropic:
-    # import anthropic
-    # client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    # message = await client.messages.create(
-    #     model="claude-sonnet-4-20250514",
-    #     max_tokens=512,
-    #     system=SYSTEM_PROMPT,
-    #     messages=[{"role": "user", "content": question}],
-    # )
-    # return message.content[0].text.strip()
+    if not settings.anthropic_api_key:
+        raise NotImplementedError("LLM integration not yet configured")
 
-    raise NotImplementedError("LLM integration not yet configured")
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    message = await client.messages.create(
+        model=_SQL_MODEL,
+        max_tokens=512,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": question}],
+    )
+
+    raw_sql = message.content[0].text if message.content else ""
+    sql = _strip_sql_fence(raw_sql)
+
+    if not sql:
+        raise ValueError("LLM returned an empty SQL response")
+
+    logger.debug("Generated SQL for %r: %s", question, sql)
+    return sql
 
 
 def _validate_select_only(sql: str) -> None:
@@ -97,7 +124,7 @@ async def execute_sql(db: AsyncSession, sql: str) -> list[dict]:
 async def generate_answer(question: str, sql: str, rows: list[dict]) -> str:
     """Call LLM to generate a human-friendly answer from the SQL results.
 
-    Currently a stub.
+    Currently a stub — will be wired to LLM in the next task.
     """
     # TODO: implement LLM call to summarize results
     if not rows:
