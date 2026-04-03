@@ -28,8 +28,10 @@ Source: `frontend/src/`
 ## Home Page Behaviour
 
 The home page (`/`) presents:
+- Example question chip buttons that pre-fill the textarea when clicked.
 - A textarea for entering a plain-English baseball question (Enter to submit).
 - An "Ask" button that calls `queryStats()` from `frontend/src/lib/api.ts`.
+- While loading: a skeleton placeholder replaces the results area.
 - On success: an **Answer** card, a **Generated SQL** code block, and a **Results** table.
 - On error: a red error card with the message from the API.
 

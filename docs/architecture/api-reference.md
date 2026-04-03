@@ -35,9 +35,9 @@ Accepts a natural language baseball question, converts it to SQL via an LLM, exe
   }
   ```
 
-  | Field | Type | Required | Description |
-  |-------|------|----------|-------------|
-  | `question` | string | Yes | Natural language question about MLB stats |
+  | Field | Type | Required | Constraints | Description |
+  |-------|------|----------|-------------|-------------|
+  | `question` | string | Yes | 3–500 characters | Natural language question about MLB stats |
 
 - **Response** (200) (`QueryResponse`):
   ```json
@@ -60,5 +60,7 @@ Accepts a natural language baseball question, converts it to SQL via an LLM, exe
 
   | Status | Condition |
   |--------|-----------|
-  | 400 | SQL execution error (generated SQL was invalid) |
+  | 400 | SQL guard rejected the generated query (non-SELECT, multi-statement, or SELECT INTO) |
+  | 422 | Request validation failed (`question` missing, too short (<3), or too long (>500)) |
+  | 500 | SQL execution failed — internal error, generic message returned to caller |
   | 501 | LLM integration not configured |

@@ -49,11 +49,12 @@ npm install
 npm run dev
 ```
 
-**Data pipeline** (ingest one season of batting stats):
+**Data pipeline** (ingest one season of batting and pitching stats):
 ```bash
 cd data_pipeline
 pip install -r requirements.txt
 python ingest_batting.py --season 2025
+python ingest_pitching.py --season 2025
 ```
 
 ## Project Structure
@@ -64,7 +65,7 @@ mlb-statbat/
 │   ├── app/
 │   │   ├── main.py          # FastAPI entry point and route definitions
 │   │   ├── text_to_sql.py   # LLM-powered query generation (stub)
-│   │   ├── models.py        # SQLAlchemy models (Player, BattingStats)
+│   │   ├── models.py        # SQLAlchemy models (Player, BattingStats, PitchingStats)
 │   │   ├── schemas.py       # Pydantic request/response schemas
 │   │   ├── database.py      # Async DB session setup
 │   │   └── config.py        # pydantic-settings environment config
@@ -74,7 +75,8 @@ mlb-statbat/
 │       ├── app/             # Next.js app router pages
 │       └── lib/api.ts       # API client (queryStats)
 ├── data_pipeline/
-│   └── ingest_batting.py    # FanGraphs batting stats ingestion
+│   ├── ingest_batting.py    # FanGraphs batting stats ingestion
+│   └── ingest_pitching.py   # FanGraphs pitching stats ingestion
 ├── docs/
 │   ├── architecture/        # Technical architecture docs
 │   └── setup/              # Deployment and infrastructure guides
@@ -92,6 +94,7 @@ mlb-statbat/
 | `ANTHROPIC_API_KEY` | No | Anthropic Claude API key (for text-to-SQL) |
 | `OPENAI_API_KEY` | No | OpenAI API key (fallback text-to-SQL) |
 | `CLOUDFLARED_TOKEN` | No | Cloudflare Tunnel token (for external access) |
+| `CORS_ORIGINS` | No | Comma-separated allowed CORS origins (default: `http://localhost:3000,http://localhost:3001`) |
 | `NEXT_PUBLIC_API_URL` | No | Backend base URL seen by the browser (default: `http://localhost:8000`) |
 
 Never commit `.env` to version control.

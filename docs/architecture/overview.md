@@ -55,6 +55,34 @@ Unique constraint: `(player_mlb_id, season)`
 | `wrc_plus` | Integer | Nullable |
 | `war` | Float | Nullable |
 
+### `pitching_stats` table (`backend/app/models.py` — `PitchingStats`)
+
+Unique constraint: `(player_mlb_id, season)`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | Integer | Primary key, autoincrement |
+| `player_mlb_id` | Integer | Indexed; references `players.mlb_id` |
+| `season` | SmallInteger | |
+| `team` | String(50) | Nullable |
+| `games` | Integer | Nullable |
+| `games_started` | Integer | Nullable |
+| `innings_pitched` | Float | Nullable |
+| `wins` | Integer | Nullable |
+| `losses` | Integer | Nullable |
+| `saves` | Integer | Nullable |
+| `strikeouts` | Integer | Nullable |
+| `walks` | Integer | Nullable |
+| `home_runs_allowed` | Integer | Nullable |
+| `era` | Float | Nullable |
+| `whip` | Float | Nullable |
+| `fip` | Float | Nullable |
+| `k_per_9` | Float | Nullable |
+| `bb_per_9` | Float | Nullable |
+| `hr_per_9` | Float | Nullable |
+| `xfip` | Float | Nullable |
+| `war` | Float | Nullable |
+
 ## API Endpoints
 
 | Method | Path | Handler |
@@ -71,30 +99,51 @@ Full request/response details: see [api-reference.md](./api-reference.md).
 Three functions handle the query pipeline:
 
 1. `generate_sql(question: str) -> str` — intended to call an LLM (Anthropic Claude or OpenAI) with `SYSTEM_PROMPT` containing the DB schema, and return a SELECT query. Currently raises `NotImplementedError`.
-2. `execute_sql(db: AsyncSession, sql: str) -> list[dict]` — executes the generated SQL against PostgreSQL via SQLAlchemy async and returns rows as a list of dicts.
-3. `generate_answer(question, sql, rows) -> str` — intended to call an LLM to produce a human-friendly summary of the results. Currently returns a raw string representation.
+2. `_validate_select_only(sql: str) -> None` — SQL guard (using `sqlparse`) that enforces exactly one SELECT statement. Blocks DML/DDL, multi-statement injection via semicolons, and `SELECT INTO`. Raises `ValueError` on any violation, which the endpoint surfaces as HTTP 400.
+3. `execute_sql(db: AsyncSession, sql: str) -> list[dict]` — calls `_validate_select_only`, then executes the SQL against PostgreSQL via SQLAlchemy async and returns rows as a list of dicts. DB errors are logged internally; the caller receives a generic HTTP 500.
+4. `generate_answer(question, sql, rows) -> str` — intended to call an LLM to produce a human-friendly summary of the results. Currently returns a raw string representation.
 
-The `SYSTEM_PROMPT` embeds the full DB schema so the LLM can generate accurate SQL without needing additional context at query time.
+The `SYSTEM_PROMPT` embeds the full DB schema (players, batting_stats, pitching_stats) so the LLM can generate accurate SQL without needing additional context at query time.
 
 When the LLM is not configured, `POST /api/query` returns HTTP 501.
 
-## Data Pipeline (`data_pipeline/ingest_batting.py`)
+## Data Pipeline
 
-Fetches batting stats from FanGraphs via the `pybaseball` library and upserts them into PostgreSQL.
+Two scripts fetch stats from FanGraphs via the `pybaseball` library and upsert them into PostgreSQL.
+
+### `data_pipeline/ingest_batting.py`
 
 **CLI usage:**
 ```bash
 python ingest_batting.py --season 2025
+python ingest_batting.py --season 2025 --qual 100
 ```
 
 **What it does:**
 1. Calls `pybaseball.batting_stats(season, qual=50)` — returns all qualified batters for the season.
 2. Transforms the raw FanGraphs DataFrame into `players` and `batting_stats` shapes.
-3. Upserts into PostgreSQL:
+3. Upserts into PostgreSQL (row-by-row):
    - `players` — on conflict by `mlb_id`, updates `team` and `name_display`.
    - `batting_stats` — on conflict by `(player_mlb_id, season)`, updates all stat columns.
 
-**Qualification threshold:** `qual=50` (minimum 50 plate appearances).
+**Qualification threshold:** `qual=50` (minimum plate appearances; configurable via `--qual`).
+
+### `data_pipeline/ingest_pitching.py`
+
+**CLI usage:**
+```bash
+python ingest_pitching.py --season 2025
+python ingest_pitching.py --season 2025 --qual 50
+```
+
+**What it does:**
+1. Calls `pybaseball.pitching_stats(season, qual=30)` — returns all qualified pitchers for the season.
+2. Transforms the raw FanGraphs DataFrame into `players` and `pitching_stats` shapes.
+3. Upserts into PostgreSQL (bulk `executemany` for performance):
+   - `players` — on conflict by `mlb_id`, updates `team` and `name_display`.
+   - `pitching_stats` — on conflict by `(player_mlb_id, season)`, updates all stat columns.
+
+**Qualification threshold:** `qual=30` (minimum innings pitched; configurable via `--qual`).
 
 ## Environment Variables
 
@@ -105,6 +154,7 @@ Managed via `pydantic-settings` in `backend/app/config.py`. Loaded from `.env` a
 | `DATABASE_URL` | `postgresql+asyncpg://statbat:changeme@db:5432/statbat` | Async DB connection (backend) |
 | `ANTHROPIC_API_KEY` | `""` | Anthropic Claude API key (for text-to-SQL) |
 | `OPENAI_API_KEY` | `""` | OpenAI API key (fallback text-to-SQL) |
+| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | Comma-separated allowed CORS origins |
 
 The data pipeline reads `DATABASE_URL` from `.env` and replaces `asyncpg` with `psycopg2` for synchronous ingestion.
 
