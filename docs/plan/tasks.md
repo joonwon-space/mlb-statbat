@@ -21,7 +21,7 @@ Each item should be completable in a single commit.
 
 - [x] `execute_sql()`에 SQL 가드 추가 — SELECT 쿼리만 허용, DROP/DELETE/UPDATE/INSERT/ALTER 차단 [team-analysis: SEC-001]
 - [x] SQL 실행 에러 메시지를 사용자에게 노출하지 않도록 변경 — 서버 로그만, 클라이언트에는 일반 메시지 [team-analysis: SEC-006]
-- [ ] CORS `allow_origins`를 환경변수 기반으로 제한 — 개발: localhost, 프로덕션: statbat.joonwon.dev [team-analysis: SEC-003]
+- [x] CORS `allow_origins`를 환경변수 기반으로 제한 — 개발: localhost, 프로덕션: statbat.joonwon.dev [team-analysis: SEC-003]
 - [ ] `QueryRequest.question`에 `min_length=3, max_length=500` 유효성 검사 추가 [team-analysis: TD-005/SEC-007]
 - [ ] `batting_stats.season` 컬럼에 인덱스 추가 [team-analysis: PERF-003]
 - [ ] `data_pipeline/ingest_batting.py`의 `print()`를 `logging` 모듈로 교체 [team-analysis: TD-003]
