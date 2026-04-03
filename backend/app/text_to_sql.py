@@ -8,9 +8,13 @@ Tables:
 - batting_stats: id, player_mlb_id, season, team, games, plate_appearances, at_bats,
   hits, doubles, triples, home_runs, rbi, runs, stolen_bases, walks, strikeouts,
   batting_avg, obp, slg, ops, wrc_plus, war
+- pitching_stats: id, player_mlb_id, season, team, games, games_started,
+  innings_pitched, wins, losses, saves, strikeouts, walks, home_runs_allowed,
+  era, whip, fip, xfip, k_per_9, bb_per_9, hr_per_9, war
 
 Relationships:
 - batting_stats.player_mlb_id references players.mlb_id
+- pitching_stats.player_mlb_id references players.mlb_id
 """
 
 SYSTEM_PROMPT = f"""You are a SQL assistant for an MLB statistics database (PostgreSQL).
