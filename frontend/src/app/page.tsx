@@ -6,28 +6,46 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { queryStats, type QueryResponse } from "@/lib/api";
 
+const EXAMPLE_QUESTIONS = [
+  "What is Shohei Ohtani's OPS this season?",
+  "Who hit the most home runs in 2024?",
+  "Show me the top 5 pitchers by ERA in 2025.",
+  "What is Aaron Judge's career WAR?",
+  "Who had the highest batting average in 2023?",
+];
+
 export default function Home() {
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<QueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!question.trim()) return;
+  async function submitQuestion(q: string) {
+    const trimmed = q.trim();
+    if (!trimmed) return;
 
     setLoading(true);
     setError(null);
     setResponse(null);
 
     try {
-      const data = await queryStats(question);
+      const data = await queryStats(trimmed);
       setResponse(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await submitQuestion(question);
+  }
+
+  function handleChipClick(q: string) {
+    setQuestion(q);
+    void submitQuestion(q);
   }
 
   return (
@@ -61,6 +79,20 @@ export default function Home() {
           </Button>
         </form>
 
+        <div className="mt-4 flex flex-wrap gap-2">
+          {EXAMPLE_QUESTIONS.map((q) => (
+            <button
+              key={q}
+              type="button"
+              onClick={() => handleChipClick(q)}
+              disabled={loading}
+              className="rounded-full border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-600 transition-colors hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+
         {error && (
           <Card className="mt-6 border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950">
             <CardContent className="pt-6 text-red-700 dark:text-red-400">
@@ -69,7 +101,20 @@ export default function Home() {
           </Card>
         )}
 
-        {response && (
+        {loading && (
+          <div className="mt-6 space-y-4">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="space-y-2">
+                  <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+                  <div className="h-4 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {response && !loading && (
           <div className="mt-6 space-y-4">
             <Card>
               <CardHeader>
