@@ -20,10 +20,10 @@ DATABASE_URL = os.getenv(
 ).replace("asyncpg", "psycopg2")
 
 
-def fetch_batting(season: int) -> pd.DataFrame:
+def fetch_batting(season: int, qual: int = 50) -> pd.DataFrame:
     """Fetch season batting stats via pybaseball."""
-    print(f"Fetching {season} batting stats from FanGraphs...")
-    df = batting_stats(season, qual=50)
+    print(f"Fetching {season} batting stats from FanGraphs (qual={qual})...")
+    df = batting_stats(season, qual=qual)
     print(f"  Retrieved {len(df)} player rows")
     return df
 
@@ -121,9 +121,15 @@ def load(players: pd.DataFrame, stats: pd.DataFrame) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Ingest MLB batting stats")
     parser.add_argument("--season", type=int, default=2025, help="Season year")
+    parser.add_argument(
+        "--qual",
+        type=int,
+        default=50,
+        help="Minimum plate appearances qualifier (default: 50)",
+    )
     args = parser.parse_args()
 
-    df = fetch_batting(args.season)
+    df = fetch_batting(args.season, qual=args.qual)
     players, stats = transform(df, args.season)
     load(players, stats)
     print("Done!")
