@@ -86,12 +86,17 @@ def transform(df: pd.DataFrame, season: int) -> tuple[pd.DataFrame, pd.DataFrame
 
 
 def load(players: pd.DataFrame, stats: pd.DataFrame) -> None:
-    """Insert data into PostgreSQL, upserting on conflict."""
+    """Insert data into PostgreSQL, upserting on conflict.
+
+    Uses bulk executemany instead of row-by-row iteration for performance.
+    Matches the pattern used in ingest_pitching.py.
+    """
     engine = create_engine(DATABASE_URL)
 
     with engine.begin() as conn:
-        # Upsert players
-        for _, row in players.iterrows():
+        # Bulk upsert players
+        player_records = players.where(players.notna(), None).to_dict("records")
+        if player_records:
             conn.execute(
                 text("""
                     INSERT INTO players (mlb_id, name_first, name_last, name_display, team)
@@ -100,18 +105,18 @@ def load(players: pd.DataFrame, stats: pd.DataFrame) -> None:
                         team = EXCLUDED.team,
                         name_display = EXCLUDED.name_display
                 """),
-                dict(row),
+                player_records,
             )
 
-        # Upsert batting stats
-        for _, row in stats.iterrows():
-            cols = [c for c in row.index if pd.notna(row[c])]
-            values = {c: row[c] for c in cols}
-            placeholders = ", ".join(f":{c}" for c in cols)
-            col_names = ", ".join(cols)
-            update_clause = ", ".join(
-                f"{c} = EXCLUDED.{c}" for c in cols if c not in ("player_mlb_id", "season")
-            )
+        # Bulk upsert batting stats — build query from actual columns in the DataFrame
+        stat_cols = list(stats.columns)
+        update_cols = [c for c in stat_cols if c not in ("player_mlb_id", "season")]
+        col_names = ", ".join(stat_cols)
+        placeholders = ", ".join(f":{c}" for c in stat_cols)
+        update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+
+        stat_records = stats.where(stats.notna(), None).to_dict("records")
+        if stat_records:
             conn.execute(
                 text(f"""
                     INSERT INTO batting_stats ({col_names})
@@ -119,10 +124,10 @@ def load(players: pd.DataFrame, stats: pd.DataFrame) -> None:
                     ON CONFLICT (player_mlb_id, season) DO UPDATE SET
                         {update_clause}
                 """),
-                values,
+                stat_records,
             )
 
-    logger.info("  Loaded %d players, %d batting stat rows", len(players), len(stats))
+    logger.info("Loaded %d players, %d batting stat rows", len(players), len(stats))
 
 
 def main():
