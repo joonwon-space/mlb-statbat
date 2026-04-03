@@ -1,0 +1,116 @@
+{
+  "agent": "tech-debt-analyst",
+  "summary": "The codebase is very early-stage (~741 lines total) with clean structure but critical foundational gaps: zero test coverage, no logging framework, print() statements in production code, row-by-row database inserts in the data pipeline, and create_all() instead of Alembic migrations. The small size means tech debt is manageable now but will compound quickly as features are added.",
+  "findings": [
+    {
+      "id": "TD-001",
+      "title": "Zero test coverage across entire project",
+      "category": "test-gap",
+      "severity": "critical",
+      "effort": "M",
+      "impact": "reliability",
+      "location": "backend/, frontend/src/, data_pipeline/",
+      "detail": "No test files exist anywhere in the project. No pytest fixtures, no component tests, no e2e tests. Every change carries regression risk with no safety net.",
+      "recommendation": "Create backend/tests/ with pytest fixtures for AsyncSession mock. Add test_main.py (health endpoint), test_text_to_sql.py (execute_sql, generate_answer stubs). Add frontend/__tests__/ with page.test.tsx. Target 80% backend coverage first."
+    },
+    {
+      "id": "TD-002",
+      "title": "Row-by-row upsert in data pipeline instead of batch operations",
+      "category": "code-smell",
+      "severity": "high",
+      "effort": "M",
+      "impact": "maintainability",
+      "location": "data_pipeline/ingest_batting.py:87-116",
+      "detail": "Both player upsert (line 87) and batting stats upsert (line 100) iterate row-by-row with iterrows(), executing individual SQL statements. For 300+ players per season this is slow and generates excessive DB round-trips. The dynamic SQL construction with f-strings is also fragile.",
+      "recommendation": "Use executemany() with a single parameterized upsert statement, or use pandas to_sql() with method='multi' + a custom upsert function. Alternatively use psycopg2.extras.execute_values() for batch insert."
+    },
+    {
+      "id": "TD-003",
+      "title": "print() statements instead of logging module",
+      "category": "code-smell",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "maintainability",
+      "location": "data_pipeline/ingest_batting.py:25,27,118,129",
+      "detail": "Four print() statements used for operational output. No way to control log levels, no timestamps, no structured logging. When the pipeline fails silently or partially, debugging will be difficult.",
+      "recommendation": "Replace print() with Python logging module. Add logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s') at module level. Use logger.info() for progress, logger.error() for failures."
+    },
+    {
+      "id": "TD-004",
+      "title": "Database schema managed by create_all() instead of Alembic",
+      "category": "architecture",
+      "severity": "high",
+      "effort": "M",
+      "impact": "maintainability",
+      "location": "backend/app/main.py:14-17",
+      "detail": "Tables are created via Base.metadata.create_all() on every app startup. This cannot handle column additions, type changes, or data migrations. Adding PitchingStats model will require dropping and recreating tables, losing data.",
+      "recommendation": "Run 'alembic init' in backend/, configure alembic.ini with async engine, create initial migration from existing models. Remove create_all() from lifespan. Alembic is already in requirements.txt but unused."
+    },
+    {
+      "id": "TD-005",
+      "title": "No input validation on QueryRequest.question field",
+      "category": "code-smell",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "reliability",
+      "location": "backend/app/schemas.py:4-5",
+      "detail": "QueryRequest accepts any string including empty strings, extremely long strings (potential DoS), or strings with control characters. No min/max length constraint, no sanitization.",
+      "recommendation": "Add Pydantic Field validators: question: str = Field(..., min_length=3, max_length=500, description='Natural language question about MLB stats'). Add a strip_whitespace validator."
+    },
+    {
+      "id": "TD-006",
+      "title": "generate_answer() returns raw str(rows) — not LLM stub but bad fallback",
+      "category": "code-smell",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "maintainability",
+      "location": "backend/app/text_to_sql.py:51-59",
+      "detail": "The generate_answer stub returns str(rows) which produces Python dict repr like \"[{'name': 'Ohtani', 'ops': 1.012}]\" — unreadable for users. Even as a stub, it should format results minimally.",
+      "recommendation": "Until LLM is wired, format as a simple table string or JSON pretty-print. Add a TODO marker for LLM integration with a clear contract for the expected output format."
+    },
+    {
+      "id": "TD-007",
+      "title": "No database connection pool configuration",
+      "category": "architecture",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "reliability",
+      "location": "backend/app/database.py:5",
+      "detail": "create_async_engine uses default pool settings (pool_size=5, max_overflow=10). No pool_pre_ping for connection health checks, no pool_recycle for stale connections. Under load or after DB restarts, connections may fail silently.",
+      "recommendation": "Add pool_pre_ping=True, pool_size=10, max_overflow=20, pool_recycle=3600 to create_async_engine(). These are safe defaults for a small app."
+    },
+    {
+      "id": "TD-008",
+      "title": "Data pipeline uses synchronous psycopg2 but backend uses asyncpg",
+      "category": "architecture",
+      "severity": "low",
+      "effort": "S",
+      "impact": "developer-experience",
+      "location": "data_pipeline/ingest_batting.py:19",
+      "detail": "The pipeline replaces 'asyncpg' with 'psycopg2' in the DATABASE_URL. This works but is a maintenance risk — two different DB drivers, two different connection patterns. If DATABASE_URL format changes, the replace() could break.",
+      "recommendation": "Accept a separate SYNC_DATABASE_URL env var, or use a dedicated pipeline DATABASE_URL that uses psycopg2 natively. Document the dual-driver pattern."
+    },
+    {
+      "id": "TD-009",
+      "title": "Frontend page.tsx is a single monolithic 'use client' component",
+      "category": "architecture",
+      "severity": "low",
+      "effort": "M",
+      "impact": "maintainability",
+      "location": "frontend/src/app/page.tsx",
+      "detail": "The entire page including form, results display, error handling, and table rendering is in a single 144-line client component. As features are added (history, example questions, visualizations), this will grow unwieldy. The 'use client' directive also prevents server-side rendering of the page shell.",
+      "recommendation": "Extract into: QueryForm component, QueryResults component, ResultsTable component, ErrorDisplay component. Keep the page.tsx as a server component with client islands."
+    },
+    {
+      "id": "TD-010",
+      "title": "No .env.example file for developer onboarding",
+      "category": "code-smell",
+      "severity": "low",
+      "effort": "S",
+      "impact": "developer-experience",
+      "location": "project root",
+      "detail": ".env is in .gitignore but there is no .env.example template. New developers (or the same developer on a new machine) must guess which environment variables are needed.",
+      "recommendation": "Create .env.example with all required variables and placeholder values. Document which are required vs optional."
+    }
+  ]
+}

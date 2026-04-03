@@ -1,0 +1,43 @@
+{
+  "agent": "security-reviewer",
+  "summary": "Fix #1 (sqlparse-based SQL guard) is a meaningful improvement over the previous regex approach and correctly blocks semicolon injection and non-SELECT DML/DDL statements. The test suite (fix #2) confirms the guard behavior for all standard attack vectors. However, one HIGH-severity gap persists: sqlparse classifies PostgreSQL's 'SELECT INTO new_table' as type='SELECT', allowing it through the guard. This is not theoretical — it is a real DDL operation that creates a new table, and asyncpg does NOT block it at the driver level. The test explicitly documents this limitation without asserting it is blocked. The logging fix (fix #3) and bulk executemany (fix #4) introduce no new security concerns. The ingest pipeline constructs INSERT column lists via f-string from DataFrame column names — values are safely parameterized but column names are not whitelist-validated. Previously identified SEC-004 (no rate limiting) and SEC-006 (SYSTEM_PROMPT lacks prompt-injection defense) remain open from the prior review cycle.",
+  "verdict": "request-changes",
+  "findings": [
+    {
+      "id": "SEC-001",
+      "title": "SELECT INTO bypasses SQL guard — LLM can create new tables",
+      "severity": "high",
+      "category": "sql-injection",
+      "location": "backend/app/text_to_sql.py:55-68",
+      "detail": "Exploitation scenario: An attacker crafts a natural language question or injects a prompt override (e.g., via a player name field that ends up in LLM context) causing the LLM to generate 'SELECT * INTO attacker_table FROM players WHERE 1=1'. sqlparse.parse returns type='SELECT' for this statement, so _validate_select_only() raises no error. asyncpg executes the DDL, creating a new table containing all player records. In a shared-schema multi-tenant environment, the attacker may be able to query this table later. Even in a single-tenant environment, repeated injections create table pollution and schema bloat. The test file at line 113-125 explicitly acknowledges sqlparse classifies this as SELECT but wraps the assertion in try/except/pass — the guard does NOT block SELECT INTO today.",
+      "fix": "After verifying stmt_type == 'SELECT', scan for INTO keyword outside subquery context: `tokens = list(stmt.flatten()); into_idx = [i for i, t in enumerate(tokens) if t.ttype is sqlparse.tokens.Keyword and t.normalized == 'INTO']; if into_idx: raise ValueError('SELECT INTO is not permitted')`. Defense in depth: also run the DB user under a PostgreSQL role with only SELECT privilege on application tables, ensuring even if the guard fails, the query is rejected at the DB layer."
+    },
+    {
+      "id": "SEC-002",
+      "title": "Dynamic SQL column names not whitelist-validated in ingest_pitching.load()",
+      "severity": "medium",
+      "category": "sql-injection",
+      "location": "data_pipeline/ingest_pitching.py:107-121",
+      "detail": "col_names and update_clause are built from stat_cols (DataFrame column names) and f-string interpolated into the INSERT SQL. Column values are correctly parameterized via :col_name SQLAlchemy bind parameters (safe from data injection), but the column names themselves are not sanitized. A supply-chain compromise of pybaseball that returns a column name like `era; DROP TABLE pitching_stats --` would produce malformed SQL at the column-list position. Risk is low today (controlled constants), but the pattern is fragile.",
+      "fix": "Add validation before SQL construction: `import re; invalid = [c for c in stat_cols if not re.match(r'^[a-z_][a-z0-9_]*$', c)]; if invalid: raise ValueError(f'Unsafe column names detected: {invalid}')`. This hardens against supply-chain attacks."
+    },
+    {
+      "id": "SEC-003",
+      "title": "No rate limiting on /api/query endpoint",
+      "severity": "medium",
+      "category": "input-validation",
+      "location": "backend/app/main.py:47",
+      "detail": "The /api/query endpoint has no rate limiting. Once LLM integration is wired, each request triggers an Anthropic/OpenAI API call (per-token cost) and a database query. A single client can flood the endpoint causing: excessive LLM API costs, database connection pool exhaustion, and effective denial of service. The project security checklist in CLAUDE.md explicitly requires rate limiting on all endpoints. This was flagged in the previous review cycle and remains unaddressed.",
+      "fix": "Add slowapi middleware: `pip install slowapi; from slowapi import Limiter; from slowapi.util import get_remote_address; limiter = Limiter(key_func=get_remote_address); @limiter.limit('10/minute')` on the query endpoint. Add slowapi to requirements.txt."
+    },
+    {
+      "id": "SEC-004",
+      "title": "Full SQL logged on execution failure may expose user PII in log aggregation",
+      "severity": "low",
+      "category": "data-exposure",
+      "location": "backend/app/text_to_sql.py:72-75",
+      "detail": "logger.exception('SQL execution failed for query: %s', sql) logs the complete SQL string. When LLM integration is live, the generated SQL may embed literal values from the user's question (e.g., WHERE name = 'John Doe'). These values will appear in server logs and any connected log aggregation systems (CloudWatch, Datadog, etc.), where they persist for retention periods and may be accessible to operations staff.",
+      "fix": "Log a truncated or hashed reference instead: `logger.exception('SQL execution failed (query_len=%d, preview=%s)', len(sql), sql[:100])`. This preserves enough context for debugging without logging full user data."
+    }
+  ]
+}

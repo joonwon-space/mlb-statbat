@@ -1,0 +1,83 @@
+{
+  "agent": "perf-bottleneck-analyst",
+  "summary": "The primary performance bottleneck is the data pipeline's row-by-row upsert pattern which will scale poorly as seasons and stat types are added. The backend has no query caching for repeated LLM calls (identical questions hit the LLM API every time), no connection pool tuning, and no response streaming for LLM results. The frontend is lightweight but forces full client-side rendering. Overall, the app is small enough that most bottlenecks are latent — they'll surface when data volume and traffic grow.",
+  "findings": [
+    {
+      "id": "PERF-001",
+      "title": "Data pipeline row-by-row inserts — O(n) DB round-trips per season",
+      "category": "pipeline",
+      "severity": "high",
+      "effort": "M",
+      "impact": "response-time",
+      "location": "data_pipeline/ingest_batting.py:87-116",
+      "detail": "Each player and each stat row is inserted individually via iterrows(). For 300 players, that's 600+ individual SQL round-trips per season. When adding pitching stats and historical seasons, this could mean 5000+ round-trips. Estimated time: 30-60 seconds per season vs 1-2 seconds with batch insert.",
+      "recommendation": "Use psycopg2.extras.execute_values() or executemany() to batch all rows in a single statement. Group player upserts into one batch and stat upserts into another. Expected improvement: 20-30x faster ingestion."
+    },
+    {
+      "id": "PERF-002",
+      "title": "No LLM response caching — identical questions re-call the API every time",
+      "category": "llm",
+      "severity": "high",
+      "effort": "M",
+      "impact": "response-time",
+      "location": "backend/app/text_to_sql.py:24-41",
+      "detail": "When LLM is wired up, every query will make a fresh API call (1-5s latency, $0.003-0.015 cost). Common questions like 'who leads in home runs' will be asked repeatedly. No caching mechanism exists.",
+      "recommendation": "Add an in-memory LRU cache (functools.lru_cache or cachetools.TTLCache with 1-hour TTL) keyed on normalized question text. Cache the generated SQL, not the results (results may change as data is updated). Expected: 80% cache hit rate for common queries."
+    },
+    {
+      "id": "PERF-003",
+      "title": "No database indexes on season column for batting_stats",
+      "category": "database",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "response-time",
+      "location": "backend/app/models.py:24-56",
+      "detail": "player_mlb_id has an index, but season does not. Most LLM-generated queries will filter by season (WHERE season = 2025). Without an index, this requires a full table scan. The unique constraint on (player_mlb_id, season) creates a composite index, but single-column queries on season alone won't benefit from it efficiently.",
+      "recommendation": "Add index=True to the season column: season: Mapped[int] = mapped_column(SmallInteger, index=True). Also consider a composite index on (season, team) for common GROUP BY queries."
+    },
+    {
+      "id": "PERF-004",
+      "title": "No connection pool configuration — default 5 connections may bottleneck",
+      "category": "database",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "scalability",
+      "location": "backend/app/database.py:5",
+      "detail": "SQLAlchemy async engine uses default pool_size=5 with max_overflow=10. Under concurrent load (5+ simultaneous queries), requests will queue waiting for connections. No pool_pre_ping means stale connections after DB restart will cause errors.",
+      "recommendation": "Configure: create_async_engine(url, pool_size=10, max_overflow=20, pool_pre_ping=True, pool_recycle=3600). This handles moderate traffic without overloading the database."
+    },
+    {
+      "id": "PERF-005",
+      "title": "No LLM response streaming — user waits for full response before seeing anything",
+      "category": "llm",
+      "severity": "medium",
+      "effort": "L",
+      "impact": "response-time",
+      "location": "backend/app/main.py:36-51",
+      "detail": "The query endpoint is synchronous request/response. When LLM is active, user waits 2-5s seeing only '...' on the button. Streaming the answer token-by-token would provide instant feedback and perceived speed improvement.",
+      "recommendation": "Add a streaming endpoint /api/query/stream using FastAPI StreamingResponse + Server-Sent Events. Stream phases: 'generating_sql' → sql_text → 'executing' → 'generating_answer' → answer_tokens. Frontend uses EventSource. This is a significant refactor — schedule for P2."
+    },
+    {
+      "id": "PERF-006",
+      "title": "Entire page is 'use client' — no server-side rendering benefits",
+      "category": "rendering",
+      "severity": "medium",
+      "effort": "M",
+      "impact": "load-time",
+      "location": "frontend/src/app/page.tsx:1",
+      "detail": "The 'use client' directive on page.tsx means the entire page is client-rendered. The static header, title, and layout are sent as an empty shell then hydrated. First Contentful Paint is delayed until JS bundle loads and executes.",
+      "recommendation": "Make page.tsx a server component. Extract the interactive query form and results into a separate QueryPanel client component. The header and layout render on the server for instant FCP."
+    },
+    {
+      "id": "PERF-007",
+      "title": "Data pipeline loads full DataFrame into memory",
+      "category": "pipeline",
+      "severity": "low",
+      "effort": "M",
+      "impact": "memory-usage",
+      "location": "data_pipeline/ingest_batting.py:23-28",
+      "detail": "batting_stats() returns the full season DataFrame. For current usage (~300 rows) this is fine, but if historical data (20+ seasons) is loaded in a loop, memory usage grows linearly. Not a problem now but worth noting for batch historical ingestion.",
+      "recommendation": "For multi-season ingestion, process one season at a time and release the DataFrame: for season in range(2000, 2026): df = fetch_batting(season); process(df); del df. Or use chunked iteration."
+    }
+  ]
+}

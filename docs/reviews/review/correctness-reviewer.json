@@ -1,0 +1,34 @@
+{
+  "agent": "correctness-reviewer",
+  "summary": "The four applied fixes resolve the previously identified critical issues. The sqlparse-based _validate_select_only() correctly handles empty input, whitespace-only input, multi-statement semicolon injection, and non-SELECT single statements — all verified by 25 passing tests. The bulk executemany pattern in ingest_pitching.load() is correct and sound. Three issues remain: (1) sqlparse classifies 'SELECT INTO new_table FROM ...' as type='SELECT', so this destructive PostgreSQL DDL variant passes the guard silently — the test at line 113 acknowledges this as a known limitation without asserting it is blocked; (2) the dynamic f-string SQL construction in load() builds INSERT column names directly from DataFrame column names, which are developer-controlled constants today but not validated against a safe-character whitelist; (3) the ingest_pitching.transform() stats branch avoids an explicit .copy() on the normal code path where 'season' is already in columns, creating a SettingWithCopyWarning risk under pandas Copy-on-Write semantics.",
+  "verdict": "request-changes",
+  "findings": [
+    {
+      "id": "COR-001",
+      "title": "SELECT INTO passes SQL guard — destructive DDL variant not blocked",
+      "severity": "high",
+      "category": "logic-error",
+      "location": "backend/app/text_to_sql.py:55-68",
+      "detail": "sqlparse.parse('SELECT * INTO new_table FROM players')[0].get_type() returns 'SELECT', so _validate_select_only() passes this statement without raising. SELECT INTO in PostgreSQL creates a new table populated with query results — it is a DDL/DML operation, not a pure read. The test at line 113-125 (test_select_into_blocked) explicitly acknowledges this limitation and wraps the assertion in try/except/pass, meaning the test passes whether the guard blocks or allows SELECT INTO. The comment 'asyncpg will block it at the driver level anyway' is incorrect: asyncpg does NOT filter CREATE TABLE AS or SELECT INTO by default. An adversarial LLM response could use SELECT INTO to exfiltrate data into attacker-accessible tables or pollute the schema.",
+      "fix": "After confirming stmt_type == 'SELECT', scan the flattened token stream for an INTO keyword in non-subquery position: `flat_types = [(t.ttype, t.normalized) for t in stmt.flatten()]; into_positions = [i for i, (tt, tv) in enumerate(flat_types) if tt is sqlparse.tokens.Keyword and tv == 'INTO']; if into_positions: raise ValueError('SELECT INTO is not permitted')`. Also update test_select_into_blocked to assert pytest.raises(ValueError) once the fix is in."
+    },
+    {
+      "id": "COR-002",
+      "title": "Dynamic SQL f-string column names in load() lack safe-character validation",
+      "severity": "medium",
+      "category": "data-integrity",
+      "location": "data_pipeline/ingest_pitching.py:107-121",
+      "detail": "col_names, placeholders, and update_clause are built from stat_cols = list(stats.columns), which derive from COLUMN_MAP values — developer-controlled constants today. However, these names are f-string interpolated directly into the INSERT SQL without any regex or whitelist check. If pybaseball ever returns a column whose name maps to a special character (dash, quote, SQL keyword), the interpolation would produce malformed or unsafe SQL. Values themselves are correctly parameterized via :col_name SQLAlchemy bind params, so data injection is not possible, but column-name injection is.",
+      "fix": "Add a whitelist check before building the SQL: `import re; invalid = [c for c in stat_cols if not re.match(r'^[a-z_][a-z0-9_]*$', c)]; if invalid: raise ValueError(f'Unsafe column names: {invalid}')`. This converts a silent risk into a loud, early failure."
+    },
+    {
+      "id": "COR-003",
+      "title": "Missing .copy() in transform() stats branch on normal code path",
+      "severity": "low",
+      "category": "data-integrity",
+      "location": "data_pipeline/ingest_pitching.py:80-87",
+      "detail": "stats = df[list(available.keys())].rename(columns=available) may return a view or copy depending on pandas internals. The .copy() call is only reached when 'season' is not in stats.columns (i.e. when COLUMN_MAP lacks 'Season'). On the normal path the slice is used as-is, which can trigger pandas SettingWithCopyWarning and under pandas 3.x Copy-on-Write semantics will raise on attempted mutation.",
+      "fix": "Always copy after rename: `stats = df[list(available.keys())].rename(columns=available).copy()` and remove the conditional copy inside the if block."
+    }
+  ]
+}

@@ -56,7 +56,7 @@
 
 ---
 
-## 🟡 P1 — 인프라 안정화
+## 🟡 P1 — 인프라 안정화 + 보안 강화
 
 ### [ ] DB 마이그레이션 관리 (Alembic)
 - **현재 상태**: 앱 시작 시 `create_all()`로 테이블 생성 (프로덕션 비권장)
@@ -70,6 +70,44 @@
   - Cloudflare 대시보드에서 Tunnel 생성 및 `CLOUDFLARED_TOKEN` 발급
   - `statbat.joonwon.dev` → `frontend:3000` 라우팅 설정
   - HTTPS 자동 인증서 확인
+
+### [ ] 읽기 전용 DB 사용자 생성 (query 실행용) [team-analysis: SEC-002]
+- **할 일**:
+  - `statbat_reader` PostgreSQL 역할 생성 (SELECT 권한만)
+  - `execute_sql()`에서 읽기 전용 커넥션 사용
+  - 관리자 커넥션은 마이그레이션 전용
+
+### [ ] Rate Limiting 추가 (`/api/query`) [team-analysis: SEC-004]
+- **할 일**:
+  - `slowapi` 설치 및 설정
+  - `/api/query`에 10 req/min per IP 제한
+  - 429 응답 메시지 사용자 친화적으로
+
+### [ ] 테스트 스위트 구축 [team-analysis: TD-001]
+- **할 일**:
+  - `backend/tests/` 디렉토리 + pytest 설정
+  - `test_main.py` (health 엔드포인트)
+  - `test_text_to_sql.py` (execute_sql, SQL guard)
+  - `frontend/__tests__/` 기본 컴포넌트 테스트
+  - 80% 커버리지 목표
+
+### [ ] LLM 응답 캐싱 (TTLCache) [team-analysis: PERF-002]
+- **할 일**:
+  - `cachetools.TTLCache` (1시간 TTL) 기반 캐시
+  - 정규화된 질문 텍스트를 키로 사용
+  - 생성된 SQL만 캐싱 (결과는 캐싱하지 않음)
+
+### [ ] 데이터 파이프라인 배치 인서트 전환 [team-analysis: PERF-001/TD-002]
+- **할 일**:
+  - `iterrows()` → `executemany()` 또는 `execute_values()` 변환
+  - 플레이어/스탯 각각 단일 배치 upsert
+  - 예상 개선: 20-30배 빠른 수집
+
+### [ ] 멀티시즌 히스토리 데이터 수집 (2020-2025) [team-analysis: PROD-003]
+- **할 일**:
+  - `--start-year`/`--end-year` CLI 인자 추가
+  - 최소 5개 시즌 (2020-2025) 배치 수집
+  - 시즌별 순차 처리 + 메모리 해제
 
 ### [ ] Docker Compose 전체 스택 통합 테스트
 - **할 일**:
@@ -107,6 +145,34 @@
   - LLM API 오류 (타임아웃, rate limit) 처리
   - SQL 실행 실패 시 사용자 친화적 메시지 반환
   - 전역 예외 핸들러 추가
+
+---
+
+## 🟢 P2 — UX 개선 및 데이터 확장 (team-analysis 2026-04-03)
+
+### [ ] 결과 테이블 컬럼 헤더 사람이 읽을 수 있게 변경 [team-analysis: UX-004]
+- batting_avg → AVG, home_runs → HR, wrc_plus → wRC+ 등 매핑
+
+### [ ] 야구 통계 숫자 포맷팅 [team-analysis: UX-005]
+- 타율 .300 (3자리), ERA 2자리, WAR 1자리, 카운팅 스탯 콤마
+
+### [ ] 접근성 개선: aria-label + table scope [team-analysis: UX-006/UX-007]
+- Textarea에 aria-label 추가, 테이블에 caption + scope 속성
+
+### [ ] page.tsx를 서버/클라이언트 컴포넌트로 분리 [team-analysis: PERF-006/TD-009]
+- QueryForm, ResultsTable, ErrorDisplay 컴포넌트 추출
+- 페이지 셸은 서버 렌더링
+
+### [ ] Docker 컨테이너 non-root 사용자 설정 [team-analysis: SEC-009]
+- backend/frontend Dockerfile에 appuser 추가
+
+### [ ] 수비 스탯, 팀 순위, 리그 평균 데이터 추가 [team-analysis: PROD-006]
+
+### [ ] 데이터 시각화 — 리더보드 차트, 트렌드 차트 [team-analysis: PROD-007]
+- recharts 또는 visx 사용, LLM이 차트 타입 제안
+
+### [ ] LLM 응답 스트리밍 (SSE) [team-analysis: PERF-005]
+- /api/query/stream 엔드포인트 + EventSource 프론트엔드
 
 ---
 

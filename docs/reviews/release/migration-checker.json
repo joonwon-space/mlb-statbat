@@ -1,0 +1,30 @@
+{
+  "agent": "migration-checker",
+  "summary": "No Alembic migrations exist in this project. The alembic module is not installed and no migration files were found in backend/alembic/versions/. The application uses Base.metadata.create_all() in the FastAPI lifespan handler to create tables on startup. Three ORM models are defined (Player, BattingStats, PitchingStats) with proper indexes and unique constraints. Since there is no migration framework in use, schema changes are applied automatically on startup, which is acceptable for early-stage development but not for production deployments.",
+  "verdict": "warn",
+  "migration_state": {
+    "current_head": "N/A - no Alembic configured",
+    "pending_migrations": 0,
+    "has_branches": false
+  },
+  "findings": [
+    {
+      "id": "MIG-001",
+      "title": "No Alembic migration framework configured",
+      "severity": "medium",
+      "category": "safety",
+      "location": "backend/app/main.py (lifespan handler)",
+      "detail": "The application relies on Base.metadata.create_all() to manage schema. This approach cannot handle column additions, renames, or type changes on existing tables. It will silently skip changes to existing tables.",
+      "fix": "Set up Alembic with 'alembic init alembic' and create an initial migration from the current models. This is recommended before production deployment but not blocking for dev/staging."
+    },
+    {
+      "id": "MIG-002",
+      "title": "Models have proper indexes and constraints",
+      "severity": "low",
+      "category": "consistency",
+      "location": "backend/app/models.py",
+      "detail": "All three models (Player, BattingStats, PitchingStats) define appropriate indexes (mlb_id, player_mlb_id, season) and unique constraints. Foreign key relationships between players and stats tables are not enforced at DB level (player_mlb_id is a plain integer, not a ForeignKey).",
+      "fix": "Consider adding ForeignKey('players.mlb_id') to player_mlb_id columns for referential integrity, with appropriate ondelete cascade."
+    }
+  ]
+}

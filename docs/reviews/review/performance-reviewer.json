@@ -1,0 +1,34 @@
+{
+  "agent": "performance-reviewer",
+  "summary": "Fix #4 (bulk executemany replacing N+1 INSERTs) is the most significant performance improvement in this diff and is correctly implemented. Both the player upsert and pitching stats upsert now use a single conn.execute() call with a list of dicts, which SQLAlchemy translates to executemany at the driver level — this eliminates 800+ round-trips per ingest run. Fix #1 (sqlparse validation) adds one synchronous pure-Python parse call per query execution in the async hot path; this is acceptable overhead at current traffic levels but blocks the event loop. Two medium concerns from the prior review cycle remain open: no LIMIT clause guidance in the LLM prompt (unbounded fetchall() could return thousands of rows), and the loading skeleton has no minimum display threshold causing visual flicker on fast responses. The bulk executemany fix is confirmed correct — no N+1 issues remain in ingest_pitching.py.",
+  "verdict": "request-changes",
+  "findings": [
+    {
+      "id": "PERF-001",
+      "title": "No row cap on execute_sql() fetchall() — unbounded result sets",
+      "severity": "medium",
+      "category": "api",
+      "location": "backend/app/text_to_sql.py:76-78",
+      "detail": "execute_sql() calls result.fetchall() with no row limit. The SYSTEM_PROMPT does not instruct the LLM to add LIMIT clauses. Questions like 'show me all batting stats' or 'list every pitcher' could cause the LLM to generate a limitless SELECT, returning entire tables. For batting_stats with 5 seasons x 500 players = 2500+ rows, the API response JSON would exceed 1MB and require several seconds of serialization. Each row dict takes ~500 bytes in memory. This was flagged in the prior review cycle and remains unaddressed.",
+      "fix": "Add a hard cap: replace `result.fetchall()` with `result.fetchmany(1000)`. Also add to SYSTEM_PROMPT: 'Always include LIMIT 100 in your queries unless the user explicitly asks for all results.' Return a truncation metadata field in QueryResponse when results are capped."
+    },
+    {
+      "id": "PERF-002",
+      "title": "sqlparse.parse() runs synchronously on every query — event loop blocked",
+      "severity": "low",
+      "category": "api",
+      "location": "backend/app/text_to_sql.py:55-68",
+      "detail": "sqlparse is a pure-Python parser with no C extension. For complex SQL (CTEs, many JOINs), parse() can take 1-5ms. This runs synchronously inside the async execute_sql() coroutine, blocking the asyncio event loop for the duration of each request's validation step. At current traffic (stub LLM, minimal users), this is negligible. At 100+ concurrent requests/second once LLM is live, this becomes a measurable bottleneck.",
+      "fix": "Wrap the synchronous call: `await asyncio.get_event_loop().run_in_executor(None, _validate_select_only, sql)`. This offloads parsing to a thread pool without blocking the event loop. Defer this optimization until profiling confirms it matters in production."
+    },
+    {
+      "id": "PERF-003",
+      "title": "Loading skeleton flickers on fast API responses — no minimum display threshold",
+      "severity": "low",
+      "category": "rendering",
+      "location": "frontend/src/app/page.tsx:101",
+      "detail": "The loading skeleton renders immediately when loading becomes true. For fast responses (sub-300ms), the skeleton appears and disappears in a flash — visual noise that is worse than the previous approach. This was flagged in the prior review cycle and remains unaddressed.",
+      "fix": "Add a delayed skeleton state: `const [showSkeleton, setShowSkeleton] = useState(false); useEffect(() => { if (!loading) { setShowSkeleton(false); return; } const t = setTimeout(() => setShowSkeleton(true), 300); return () => clearTimeout(t); }, [loading]);` Render skeleton only when `showSkeleton && loading`."
+    }
+  ]
+}

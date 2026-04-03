@@ -1,0 +1,138 @@
+{
+  "agent": "product-strategy-analyst",
+  "summary": "MLB StatBat is at a very early stage — the core text-to-SQL pipeline is scaffolded but not functional (LLM stubs raise NotImplementedError). Data coverage is limited to batting stats for a single table with no pitching, fielding, or historical depth. The priority ordering in todo.md is correct (data first), but the current tasks.md mixes P0 pipeline work with P3 cosmetic items. The fastest path to a usable product is: wire up LLM integration, ingest 3-5 years of batting data, and add pitching stats. Feature polish (history, examples, charts) should wait until the core loop works end-to-end.",
+  "data_coverage": {
+    "player_profiles": 40,
+    "batting_stats": 60,
+    "pitching_stats": 0,
+    "historical_depth": 10,
+    "data_freshness": 0,
+    "team_league_aggregates": 0
+  },
+  "feature_completeness": {
+    "natural_language_query": 30,
+    "query_accuracy": 0,
+    "answer_quality": 0,
+    "data_visualization": 0,
+    "search_browse": 0,
+    "comparison_tools": 0,
+    "historical_trends": 0
+  },
+  "findings": [
+    {
+      "id": "PROD-001",
+      "title": "LLM integration is not functional — core feature is a stub",
+      "category": "priority-misalignment",
+      "severity": "critical",
+      "effort": "M",
+      "impact": "user-value",
+      "detail": "generate_sql() raises NotImplementedError. The entire value proposition of the app — ask questions in natural language — does not work. Until this is wired, the app cannot be tested, demoed, or used. This should be the absolute #1 priority after basic data ingestion.",
+      "recommendation": "Wire generate_sql() to Anthropic Claude API immediately after first data ingestion. This unblocks all downstream features: answer quality, query accuracy, user testing."
+    },
+    {
+      "id": "PROD-002",
+      "title": "No pitching data — half of baseball questions cannot be answered",
+      "category": "data-gap",
+      "severity": "high",
+      "effort": "M",
+      "impact": "data-completeness",
+      "detail": "Pitching stats (ERA, WHIP, strikeouts, wins) are among the most commonly discussed baseball stats. Without pitching data, the app cannot answer questions about half the game. This is already in tasks.md as PitchingStats ORM model.",
+      "recommendation": "This is correctly prioritized in tasks.md. Execute the pitching pipeline items in order: model → ingest script → DB_SCHEMA update."
+    },
+    {
+      "id": "PROD-003",
+      "title": "No historical depth — only current season data",
+      "category": "data-gap",
+      "severity": "high",
+      "effort": "S",
+      "impact": "data-completeness",
+      "detail": "The ingestion script supports --season but there's no multi-season ingestion workflow. Users asking 'What was Mike Trout's best season?' or 'Compare 2023 vs 2024 OPS leaders' cannot be answered. Historical data makes the app dramatically more valuable.",
+      "recommendation": "Add a --start-year/--end-year option to ingest_batting.py for batch historical ingestion. Start with 2020-2025 (5 seasons) as minimum. Run as a one-time setup step."
+    },
+    {
+      "id": "PROD-004",
+      "title": "Answer quality is raw Python dict — unusable for end users",
+      "category": "missing-capability",
+      "severity": "high",
+      "effort": "M",
+      "impact": "user-value",
+      "detail": "generate_answer() returns str(rows) which produces '[{\"name\": \"Ohtani\", \"ops\": 1.012}]'. Even with SQL working, the answer card will show developer-facing output. A natural language summary is essential for the core experience.",
+      "recommendation": "Wire generate_answer() to LLM to produce human-readable summaries. This is the second LLM call — only needed after generate_sql() works. Can also add a simple template-based fallback for common query patterns."
+    },
+    {
+      "id": "PROD-005",
+      "title": "tasks.md mixes P0 and P3 items — dilutes focus",
+      "category": "priority-misalignment",
+      "severity": "medium",
+      "effort": "S",
+      "impact": "technical-foundation",
+      "detail": "Current tasks.md includes 'frontend metadata update' (cosmetic P3) alongside data pipeline work (P0). When using auto-task, it may pick up low-priority cosmetic items before critical infrastructure work is done.",
+      "recommendation": "Remove P3 items from tasks.md — keep only P0 data pipeline items. Move frontend metadata to todo.md P3 section."
+    },
+    {
+      "id": "PROD-006",
+      "title": "No fielding stats, team standings, or league averages",
+      "category": "data-gap",
+      "severity": "medium",
+      "effort": "L",
+      "impact": "data-completeness",
+      "detail": "Fielding stats (DRS, OAA, UZR), team standings (W-L record, division rank), and league averages (for context like 'above average') are missing. These are needed for advanced questions but not critical for MVP.",
+      "recommendation": "Add to todo.md P2. Fielding and team data can use pybaseball.team_batting() and fielding_stats(). League averages can be computed from existing data with aggregate queries."
+    },
+    {
+      "id": "PROD-007",
+      "title": "No data visualization — stats are text-only",
+      "category": "missing-capability",
+      "severity": "medium",
+      "effort": "L",
+      "impact": "user-value",
+      "detail": "Baseball stats are inherently visual — bar charts for leaderboards, line charts for career trends, scatter plots for correlations. The app currently only shows a plain HTML table. Visualization would differentiate from simple stat lookup sites.",
+      "recommendation": "Add to todo.md P2. Use recharts or visx for React charts. Start with a simple bar chart for leaderboard queries and line chart for trend queries. The LLM can suggest chart type based on the query."
+    },
+    {
+      "id": "PROD-008",
+      "title": "Player profiles lack position and handedness data in pipeline",
+      "category": "data-gap",
+      "severity": "low",
+      "effort": "S",
+      "impact": "data-completeness",
+      "detail": "The Player model has position, bats, throws fields but ingest_batting.py only maps IDfg, Name, and Team from pybaseball. Position and handedness data is available in pybaseball output but not extracted.",
+      "recommendation": "Update PLAYER_COLUMN_MAP to include position and handedness columns from pybaseball output. Check pybaseball batting_stats() column names for these fields."
+    }
+  ],
+  "proposed_milestones": [
+    {
+      "title": "M1: End-to-End Query Loop (MVP)",
+      "rationale": "Users can ask a question and get a real answer — the core value proposition works. This is the minimum viable product.",
+      "items": [
+        "Ingest 2020-2025 batting data",
+        "Wire generate_sql() to Anthropic Claude",
+        "Add SQL guard (SELECT-only)",
+        "Wire generate_answer() to Claude",
+        "Basic error handling for LLM failures"
+      ]
+    },
+    {
+      "title": "M2: Pitching Stats + Query Quality",
+      "rationale": "Doubles the question coverage and improves answer reliability. Makes the app useful for serious baseball discussions.",
+      "items": [
+        "PitchingStats model + ingest script",
+        "Update DB_SCHEMA with pitching tables",
+        "Add example questions to frontend",
+        "Add query history (localStorage)",
+        "LLM response caching"
+      ]
+    },
+    {
+      "title": "M3: Polish + Public Launch",
+      "rationale": "Production hardening and UX polish for sharing with real users.",
+      "items": [
+        "CORS restriction + rate limiting",
+        "Read-only DB user for queries",
+        "Alembic migrations",
+        "Number formatting + column labels",
+        "Data visualization (leaderboard charts)"
+      ]
+    }
+  ]
+}

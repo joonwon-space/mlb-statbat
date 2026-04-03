@@ -1,0 +1,43 @@
+{
+  "agent": "maintainability-reviewer",
+  "summary": "Fix #3 (logging in ingest_pitching.py) correctly resolves the print() convention violation that was flagged in the prior review cycle — the file now uses logging module with proper basicConfig setup and a module-level logger, consistent with ingest_batting.py. Fix #2 (25 tests for _validate_select_only) substantially improves testability of the security-critical SQL guard. Fix #4 (bulk executemany) is clean and well-structured. Two maintainability concerns remain: the test_select_into_blocked test (line 113-125) is a no-op assertion wrapped in try/except/pass that gives false confidence — a future regression in SELECT INTO blocking would not be caught; and the cors_origins_list @property on a pydantic-settings model remains non-idiomatic (pydantic v2 provides @computed_field for this). Previously flagged MAIN-003 (@computed_field) and MAIN-004 (generate_answer stub returning raw Python repr) remain open.",
+  "verdict": "request-changes",
+  "findings": [
+    {
+      "id": "MAIN-001",
+      "title": "test_select_into_blocked is a no-op assertion — guard regression not caught",
+      "severity": "medium",
+      "category": "testability",
+      "location": "backend/tests/test_text_to_sql.py:113-125",
+      "detail": "The test wraps the call in try/except/pass with a comment documenting the known limitation. This means the test passes regardless of whether the guard blocks or allows SELECT INTO. The current behavior (guard allows it) is not asserted, so: (a) if a future fix correctly blocks SELECT INTO, this test gives no signal of the improvement; (b) if a future change accidentally introduces new behavior, this test still passes. The 25-test suite otherwise has good explicit assertions — this one exception weakens the suite's reliability as a regression net.",
+      "fix": "Until COR-001/SEC-001 is fixed, document the known behavior explicitly: `result = 'not-raised'; try: _validate_select_only(sql) except ValueError: result = 'raised'; # Document current known behavior: sqlparse classifies SELECT INTO as SELECT; assert result == 'not-raised', 'Behavior changed — update guard if SELECT INTO is now blocked'`. Once the guard is fixed to block SELECT INTO, change to `pytest.raises(ValueError)`."
+    },
+    {
+      "id": "MAIN-002",
+      "title": "cors_origins_list @property is non-idiomatic for pydantic-settings v2",
+      "severity": "medium",
+      "category": "architecture",
+      "location": "backend/app/config.py:10",
+      "detail": "Using a plain @property on a pydantic-settings BaseSettings model works but is non-idiomatic for pydantic v2. The property is invisible to model.model_dump(), model.model_fields, and serialization, meaning it cannot be overridden via pydantic's standard override mechanisms in tests (e.g., model_validate({'cors_origins': 'http://test.com'})). This was flagged in the prior review cycle and remains unaddressed.",
+      "fix": "Use pydantic v2's @computed_field decorator: `from pydantic import computed_field; @computed_field; @property; def cors_origins_list(self) -> list[str]: return [o.strip() for o in self.cors_origins.split(',') if o.strip()]`. This integrates with serialization and test overrides."
+    },
+    {
+      "id": "MAIN-003",
+      "title": "generate_answer() stub returns raw Python repr visible to end users",
+      "severity": "medium",
+      "category": "convention",
+      "location": "backend/app/text_to_sql.py:81-86",
+      "detail": "generate_answer() returns str(rows) when rows is non-empty. str() on a list of dicts produces raw Python repr (e.g., `[{'player_mlb_id': 660271, 'ops': 1.066}]`), which is then returned in QueryResponse.answer and rendered in the frontend Answer card. This exposes internal data structure representation to users. This was flagged in the prior review cycle and remains unaddressed.",
+      "fix": "Return a user-friendly stub message: `return f'Found {len(rows)} result(s). (Natural language answers will be available once LLM integration is configured.)'`"
+    },
+    {
+      "id": "MAIN-004",
+      "title": "load() function handles two distinct responsibilities without helper extraction",
+      "severity": "low",
+      "category": "architecture",
+      "location": "data_pipeline/ingest_pitching.py:93-125",
+      "detail": "load() performs two distinct upsert operations (players, pitching stats) in a single 33-line function. These operations cannot be tested independently and errors in one are harder to isolate from the other. The pattern mirrors ingest_batting.py, so it is consistent — but both files have this same testability gap.",
+      "fix": "Extract `_upsert_players(conn, records)` and `_upsert_stats(conn, records, stat_cols)` as private helpers called from load(). This is a low-priority refactor since the load() function is well within the 50-line guideline."
+    }
+  ]
+}

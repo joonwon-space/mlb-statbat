@@ -1,0 +1,44 @@
+{
+  "agent": "test-runner",
+  "summary": "All 25 backend tests pass (SQL guard validation tests). However, overall backend coverage is only 13% (138 of 159 statements missed). Most application modules (config, database, main, models, schemas) have 0% coverage. text_to_sql.py has 64% coverage. No frontend tests are configured. Coverage is well below the 80% minimum threshold.",
+  "verdict": "warn",
+  "backend_tests": {
+    "total": 25,
+    "passed": 25,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "coverage_percent": 13,
+    "failed_tests": [],
+    "low_coverage_files": [
+      {"file": "app/config.py", "coverage": 0},
+      {"file": "app/database.py", "coverage": 0},
+      {"file": "app/main.py", "coverage": 0},
+      {"file": "app/models.py", "coverage": 0},
+      {"file": "app/schemas.py", "coverage": 0},
+      {"file": "app/text_to_sql.py", "coverage": 64}
+    ]
+  },
+  "frontend_tests": {
+    "status": "not-configured",
+    "total": 0,
+    "passed": 0,
+    "failed": 0
+  },
+  "findings": [
+    {
+      "id": "TEST-001",
+      "title": "Backend coverage critically low at 13%",
+      "severity": "high",
+      "detail": "Overall backend coverage is 13%, far below the 80% target. Only text_to_sql.py has meaningful test coverage (64%). All other modules (config, database, main, models, schemas) are at 0% coverage.",
+      "fix": "Add integration tests for API endpoints (main.py), model definitions, schema validation, and database session management. Prioritize main.py endpoint tests as they exercise the full request/response path."
+    },
+    {
+      "id": "TEST-002",
+      "title": "No frontend test suite configured",
+      "severity": "medium",
+      "detail": "No test script found in frontend/package.json. Frontend code has zero test coverage.",
+      "fix": "Add a test framework (e.g., Vitest or Jest) and at minimum test the API client (lib/api.ts) and component interactions."
+    }
+  ]
+}

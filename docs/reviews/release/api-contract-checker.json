@@ -1,0 +1,27 @@
+{
+  "agent": "api-contract-checker",
+  "summary": "Frontend and backend API contracts are consistent. The backend exposes 2 endpoints: GET /health and POST /api/query. The frontend calls only POST /api/query via fetch in lib/api.ts. The frontend TypeScript QueryResponse interface exactly matches the backend Pydantic QueryResponse schema (question: string, sql: string, result: list/array of objects, answer: string). The request body matches as well (single 'question' field). No breaking changes detected in this branch. CORS is properly configured via environment variable.",
+  "verdict": "pass",
+  "endpoints_count": 2,
+  "breaking_changes": [],
+  "findings": [
+    {
+      "id": "API-001",
+      "title": "Frontend result type uses Record<string, unknown> vs backend list[dict]",
+      "severity": "low",
+      "category": "contract-mismatch",
+      "location": "frontend/src/lib/api.ts:5 vs backend/app/schemas.py:7",
+      "detail": "Frontend types result as Record<string, unknown>[] while backend returns list[dict]. These are compatible at runtime but the frontend loses type safety on individual result fields. This is acceptable given the dynamic nature of SQL query results.",
+      "fix": "No action needed - the dynamic typing is intentional since SQL results have variable columns."
+    },
+    {
+      "id": "API-002",
+      "title": "No error response type defined in frontend",
+      "severity": "low",
+      "category": "documentation",
+      "location": "frontend/src/lib/api.ts:18",
+      "detail": "The frontend handles errors by parsing res.json() and extracting 'detail' field, which matches FastAPI's HTTPException format. However, no TypeScript interface is defined for error responses.",
+      "fix": "Consider adding an ErrorResponse interface for type safety, though current implementation works correctly."
+    }
+  ]
+}
